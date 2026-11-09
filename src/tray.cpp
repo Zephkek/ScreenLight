@@ -78,7 +78,7 @@ std::wstring describe(const std::vector<Watcher>& watchers) {
 }
 
 void refresh(HWND window) {
-  const std::vector<Watcher> watchers = duplicating_processes();
+  const std::vector<Watcher> watchers = collect_watchers();
   const bool lit = !watchers.empty();
   std::wstring tip = describe(watchers);
   if (lit == g_lit && tip == g_tip) return;
