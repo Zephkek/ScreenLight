@@ -16,6 +16,7 @@ std::vector<Watcher> collect_watchers() {
   std::vector<Watcher> all = duplicating_processes();
   append(&all, hidden_desktop_processes());
   append(&all, remote_viewers());
+  append(&all, input_senders());
   return all;
 }
 

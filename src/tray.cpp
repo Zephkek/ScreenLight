@@ -113,6 +113,9 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
     case WM_TIMER:
       if (wparam == kPollTimer) refresh(window);
       return 0;
+    case kRefreshMessage:
+      refresh(window);
+      return 0;
     case WM_DESTROY: {
       KillTimer(window, kPollTimer);
       NOTIFYICONDATAW data = tray_data(window);
@@ -140,6 +143,7 @@ int run_tray(HINSTANCE instance) {
   if (!window) return 1;
   ChangeWindowMessageFilterEx(window, g_taskbar_created, MSGFLT_ALLOW, nullptr);
   add_icon(window);
+  start_input_watch(window);
   refresh(window);
   SetTimer(window, kPollTimer, 1000, nullptr);
   MSG msg;
@@ -147,6 +151,7 @@ int run_tray(HINSTANCE instance) {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
+  stop_input_watch();
   DestroyIcon(g_on);
   DestroyIcon(g_off);
   return 0;

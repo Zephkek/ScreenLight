@@ -7,6 +7,8 @@
 
 namespace screenlight {
 
+constexpr UINT kRefreshMessage = WM_APP + 2;
+
 struct Watcher {
   DWORD pid = 0;
   std::wstring name;
@@ -16,7 +18,11 @@ struct Watcher {
 std::vector<Watcher> duplicating_processes();
 std::vector<Watcher> hidden_desktop_processes();
 std::vector<Watcher> remote_viewers();
+std::vector<Watcher> input_senders();
 std::vector<Watcher> collect_watchers();
+
+void start_input_watch(HWND notify);
+void stop_input_watch();
 
 std::wstring process_path(DWORD pid);
 std::wstring process_name(DWORD pid, const char* fallback = nullptr);
