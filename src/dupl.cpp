@@ -100,7 +100,7 @@ void read_snapshot(const Kmt& k, UINT adapter, std::vector<Watcher>* out) {
     if (std::any_of(out->begin(), out->end(), [pid](const Watcher& w) { return w.pid == pid; })) continue;
     char raw[sizeof entry.name + 1] = {};
     memcpy(raw, entry.name, sizeof entry.name);
-    out->push_back({pid, process_name(pid, raw), L"copies the screen"});
+    out->push_back({Source::kDuplication, pid, process_name(pid, raw), L"copies the screen"});
   }
 }
 

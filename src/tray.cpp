@@ -2,9 +2,6 @@
 #include <shellapi.h>
 #include <windowsx.h>
 
-#include <algorithm>
-#include <cmath>
-#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -14,41 +11,16 @@ namespace screenlight {
 namespace {
 
 constexpr UINT kTrayMessage = WM_APP + 1;
-constexpr UINT kExit = 1;
+constexpr UINT kShow = 1;
+constexpr UINT kExit = 2;
 constexpr UINT_PTR kPollTimer = 1;
 
+HINSTANCE g_instance;
 UINT g_taskbar_created;
 HICON g_off;
 HICON g_on;
 bool g_lit;
 std::wstring g_tip = L"Screen Light - nothing is watching";
-
-HICON make_light(COLORREF color, int size) {
-  BITMAPINFO bi{};
-  bi.bmiHeader.biSize = sizeof bi.bmiHeader;
-  bi.bmiHeader.biWidth = size;
-  bi.bmiHeader.biHeight = -size;
-  bi.bmiHeader.biPlanes = 1;
-  bi.bmiHeader.biBitCount = 32;
-  void* bits = nullptr;
-  HBITMAP pixels = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-  if (!pixels) return nullptr;
-  const float center = (size - 1) / 2.0f, radius = size * 0.34f;
-  auto* out = static_cast<uint32_t*>(bits);
-  for (int y = 0; y < size; ++y) {
-    for (int x = 0; x < size; ++x) {
-      const float cover = std::clamp(radius - std::hypot(x - center, y - center) + 0.5f, 0.0f, 1.0f);
-      out[y * size + x] = uint32_t(cover * 255 + 0.5f) << 24 | (color & 0xff) << 16 | (color & 0xff00) | (color >> 16 & 0xff);
-    }
-  }
-  std::vector<uint8_t> clear((size + 15) / 16 * 2 * size);
-  HBITMAP mask = CreateBitmap(size, size, 1, 1, clear.data());
-  ICONINFO info{TRUE, 0, 0, mask, pixels};
-  HICON icon = CreateIconIndirect(&info);
-  DeleteObject(mask);
-  DeleteObject(pixels);
-  return icon;
-}
 
 NOTIFYICONDATAW tray_data(HWND window) {
   NOTIFYICONDATAW data{};
@@ -79,6 +51,7 @@ std::wstring describe(const std::vector<Watcher>& watchers) {
 
 void refresh(HWND window) {
   const std::vector<Watcher> watchers = collect_watchers();
+  track(watchers);
   const bool lit = !watchers.empty();
   std::wstring tip = describe(watchers);
   if (lit == g_lit && tip == g_tip) return;
@@ -93,11 +66,15 @@ void refresh(HWND window) {
 
 void show_menu(HWND window, int x, int y) {
   HMENU menu = CreatePopupMenu();
+  AppendMenuW(menu, MF_STRING, kShow, L"Show");
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kExit, L"Exit");
+  SetMenuDefaultItem(menu, kShow, FALSE);
   SetForegroundWindow(window);
   const UINT picked = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, x, y, 0, window, nullptr);
   PostMessageW(window, WM_NULL, 0, 0);
   DestroyMenu(menu);
+  if (picked == kShow) show_window(g_instance);
   if (picked == kExit) DestroyWindow(window);
 }
 
@@ -108,13 +85,24 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
   }
   switch (message) {
     case kTrayMessage:
-      if (LOWORD(lparam) == WM_CONTEXTMENU) show_menu(window, GET_X_LPARAM(wparam), GET_Y_LPARAM(wparam));
+      switch (LOWORD(lparam)) {
+        case WM_CONTEXTMENU:
+          show_menu(window, GET_X_LPARAM(wparam), GET_Y_LPARAM(wparam));
+          break;
+        case NIN_SELECT:
+        case NIN_KEYSELECT:
+          show_window(g_instance);
+          break;
+      }
       return 0;
     case WM_TIMER:
       if (wparam == kPollTimer) refresh(window);
       return 0;
     case kRefreshMessage:
       refresh(window);
+      return 0;
+    case kShowMessage:
+      show_window(g_instance);
       return 0;
     case WM_DESTROY: {
       KillTimer(window, kPollTimer);
@@ -130,6 +118,7 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
 }  // namespace
 
 int run_tray(HINSTANCE instance) {
+  g_instance = instance;
   g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
   const int size = GetSystemMetrics(SM_CXSMICON);
   g_off = make_light(RGB(140, 140, 140), size);
@@ -142,6 +131,7 @@ int run_tray(HINSTANCE instance) {
   HWND window = CreateWindowExW(0, wc.lpszClassName, L"Screen Light", 0, 0, 0, 0, 0, nullptr, nullptr, instance, nullptr);
   if (!window) return 1;
   ChangeWindowMessageFilterEx(window, g_taskbar_created, MSGFLT_ALLOW, nullptr);
+  ChangeWindowMessageFilterEx(window, kShowMessage, MSGFLT_ALLOW, nullptr);
   add_icon(window);
   start_input_watch(window);
   refresh(window);

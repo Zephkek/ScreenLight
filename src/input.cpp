@@ -228,7 +228,7 @@ std::vector<Watcher> input_senders() {
     const wchar_t* what = s.keys && s.mouse ? L"is sending keys and mouse input"
                           : s.keys          ? L"is sending keys"
                                             : L"is sending mouse input";
-    found.push_back({s.pid, s.name, what});
+    found.push_back({Source::kInput, s.pid, s.name, what});
   }
   return found;
 }
