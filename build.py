@@ -7,7 +7,7 @@ SRC = os.path.join(HERE, 'src')
 OUT = os.path.join(HERE, 'out')
 WIN7 = ['-Wl,--major-subsystem-version,6', '-Wl,--minor-subsystem-version,1', '-Wl,--major-os-version,6',
         '-Wl,--minor-os-version,1']
-LIBS = ['-lcomctl32', '-luxtheme', '-lwtsapi32']
+LIBS = ['-lcomctl32', '-luxtheme', '-lwtsapi32', '-ladvapi32', '-lshell32']
 
 
 def build():

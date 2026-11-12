@@ -17,6 +17,7 @@ std::vector<Watcher> collect_watchers() {
   append(&all, hidden_desktop_processes());
   append(&all, remote_viewers());
   append(&all, input_senders());
+  append(&all, service_watchers());
   return all;
 }
 
