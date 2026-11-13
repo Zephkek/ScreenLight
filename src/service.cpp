@@ -39,9 +39,11 @@ void WINAPI service_main(DWORD, LPWSTR*) {
   g_status_handle = RegisterServiceCtrlHandlerExW(kServiceName, control, nullptr);
   if (!g_status_handle) return;
   g_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  start_trace();
   HANDLE pipe = CreateThread(nullptr, 0, pipe_thread, nullptr, 0, nullptr);
   set_state(SERVICE_RUNNING);
-  WaitForSingleObject(g_stop, INFINITE);
+  while (WaitForSingleObject(g_stop, 500) == WAIT_TIMEOUT) flush_trace();
+  stop_trace();
   if (pipe) {
     WaitForSingleObject(pipe, 5000);
     CloseHandle(pipe);

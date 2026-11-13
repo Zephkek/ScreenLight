@@ -10,7 +10,7 @@ namespace screenlight {
 constexpr UINT kRefreshMessage = WM_APP + 2;
 constexpr UINT kShowMessage = WM_APP + 3;
 
-enum class Source { kDuplication, kHiddenDesktop, kRemote, kInput };
+enum class Source { kDuplication, kHiddenDesktop, kRemote, kInput, kScreenRead, kMagnifier, kThumbnail };
 
 struct Watcher {
   Source source = Source::kDuplication;
@@ -31,7 +31,15 @@ void stop_input_watch();
 void track_seen(Source source, DWORD pid, const std::wstring& what, ULONGLONG ttl_ms);
 void track_open(Source source, DWORD pid, const std::wstring& what);
 void track_close(Source source, DWORD pid);
+bool tracking(Source source, DWORD pid);
 std::vector<Watcher> tracked(DWORD session);
+
+bool start_trace();
+void flush_trace();
+void stop_trace();
+void WINAPI handle_trace_event(struct _EVENT_RECORD* record);
+void begin_calibration(DWORD pid);
+ULONG read_code();
 
 void serve_pipe(HANDLE stop);
 std::wstring ask_service(const wchar_t* request);

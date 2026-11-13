@@ -55,12 +55,20 @@ void track_close(Source source, DWORD pid) {
   }
 }
 
+bool tracking(Source source, DWORD pid) {
+  const ULONGLONG now = GetTickCount64();
+  std::lock_guard<std::mutex> hold(g_lock);
+  return std::any_of(g_tracked.begin(), g_tracked.end(), [&](const Tracked& t) {
+    return t.source == source && t.pid == pid && (t.open > 0 || t.until > now);
+  });
+}
+
 std::vector<Watcher> tracked(DWORD session) {
   const ULONGLONG now = GetTickCount64();
   std::lock_guard<std::mutex> hold(g_lock);
   g_tracked.erase(std::remove_if(g_tracked.begin(), g_tracked.end(),
                                  [now](const Tracked& t) {
-                                   return (t.open == 0 && t.until <= now) || process_gone(t.pid);
+                                   return t.open == 0 ? t.until <= now : process_gone(t.pid);
                                  }),
                   g_tracked.end());
   std::vector<Watcher> found;

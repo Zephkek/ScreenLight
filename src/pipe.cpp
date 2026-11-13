@@ -14,10 +14,21 @@ constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\ScreenLight";
 constexpr wchar_t kHello[] = L"screenlight 1";
 constexpr DWORD kBufferBytes = 64 * 1024;
 
+std::wstring hello() {
+  wchar_t text[48];
+  swprintf(text, ARRAYSIZE(text), L"%ls %lx", kHello, read_code());
+  return text;
+}
+
 std::wstring answer(HANDLE pipe, const std::wstring& request) {
   ULONG session = 0;
   GetNamedPipeClientSessionId(pipe, &session);
-  std::wstring reply = kHello;
+  std::wstring reply = hello();
+  if (request == L"calibrate") {
+    ULONG pid = 0;
+    if (GetNamedPipeClientProcessId(pipe, &pid)) begin_calibration(pid);
+    return reply;
+  }
   if (request != L"list") return reply;
   for (const Watcher& w : tracked(session)) {
     reply += L"\n" + std::to_wstring(int(w.source)) + L"\t" + std::to_wstring(w.pid) + L"\t" + w.name + L"\t" + w.what;
@@ -34,6 +45,19 @@ void serve(HANDLE pipe) {
   DWORD written = 0;
   WriteFile(pipe, reply.data(), DWORD(reply.size() * sizeof(wchar_t)), &written, nullptr);
   FlushFileBuffers(pipe);
+}
+
+void calibrate() {
+  if (ask_service(L"calibrate").rfind(kHello, 0) != 0) return;
+  HDC screen = GetDC(nullptr);
+  HDC memory = CreateCompatibleDC(screen);
+  HBITMAP pixel = CreateCompatibleBitmap(screen, 1, 1);
+  HGDIOBJ old = SelectObject(memory, pixel);
+  BitBlt(memory, 0, 0, 1, 1, screen, 0, 0, SRCCOPY);
+  SelectObject(memory, old);
+  DeleteObject(pixel);
+  DeleteDC(memory);
+  ReleaseDC(nullptr, screen);
 }
 
 std::vector<std::wstring> split(const std::wstring& text, wchar_t separator) {
@@ -99,7 +123,12 @@ std::wstring ask_service(const wchar_t* request) {
 std::vector<Watcher> service_watchers() {
   std::vector<Watcher> found;
   const std::vector<std::wstring> lines = split(ask_service(L"list"), L'\n');
-  if (lines.empty() || lines[0] != kHello) return found;
+  if (lines.empty() || lines[0].rfind(kHello, 0) != 0) return found;
+  static ULONGLONG last_calibration;
+  if (!wcstoul(lines[0].c_str() + wcslen(kHello), nullptr, 16) && GetTickCount64() - last_calibration > 30000) {
+    last_calibration = GetTickCount64();
+    calibrate();
+  }
   for (size_t i = 1; i < lines.size(); ++i) {
     const std::vector<std::wstring> fields = split(lines[i], L'\t');
     if (fields.size() != 4) continue;
