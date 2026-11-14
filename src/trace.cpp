@@ -22,6 +22,9 @@ constexpr GUID kWin32k7 = {0xe7ef96be, 0x969f, 0x414f, {0x97, 0xd7, 0x3d, 0xdb, 
 constexpr GUID kMagnification = {0xc882ff1d, 0x7585, 0x4b33, {0xb1, 0x35, 0x95, 0xc5, 0x77, 0x17, 0x91, 0x37}};
 constexpr GUID kDwmApi = {0x292a52c4, 0xfa27, 0x4461, {0xb5, 0x26, 0x54, 0xa4, 0x64, 0x30, 0xbd, 0x54}};
 constexpr GUID kDwmApi7 = {0x92ae46d7, 0x6d9c, 0x4727, {0x9e, 0xd5, 0xe4, 0x9a, 0xf9, 0xc2, 0x4c, 0xbf}};
+constexpr GUID kGraphicsCapture = {0x7d0cbd25, 0x390e, 0x524d, {0x8c, 0x1e, 0x2a, 0x8e, 0x84, 0x60, 0x55, 0xc0}};
+constexpr USHORT kCaptureStarted = 1;
+constexpr USHORT kCaptureStopped = 2;
 constexpr ULONGLONG kWindowUpdateKeyword = 0x1000;
 constexpr ULONGLONG kEverything = ~0ULL;
 constexpr UCHAR kStopOpcode = 2;
@@ -108,6 +111,14 @@ void dwm_api(PEVENT_RECORD record) {
   }
 }
 
+void graphics_capture(PEVENT_RECORD record) {
+  ULONG pid = 0;
+  if (!uint_property(record, L"processId", &pid) || !pid) return;
+  const USHORT id = record->EventHeader.EventDescriptor.Id;
+  if (id == kCaptureStarted) track_open(Source::kCapture, pid, L"captures the screen or a window");
+  if (id == kCaptureStopped) track_close(Source::kCapture, pid);
+}
+
 EVENT_TRACE_PROPERTIES* properties() {
   g_properties.assign(sizeof(EVENT_TRACE_PROPERTIES) + sizeof kSessionName, 0);
   auto* props = reinterpret_cast<EVENT_TRACE_PROPERTIES*>(g_properties.data());
@@ -138,6 +149,8 @@ void WINAPI handle_trace_event(PEVENT_RECORD record) {
     track_seen(Source::kMagnifier, header.ProcessId, L"magnifies the screen", kReadShowsForMs);
   } else if (header.ProviderId == kDwmApi || header.ProviderId == kDwmApi7) {
     dwm_api(record);
+  } else if (header.ProviderId == kGraphicsCapture) {
+    graphics_capture(record);
   }
 }
 
@@ -155,7 +168,7 @@ bool start_trace() {
     EnableTraceEx2(g_session, &provider, EVENT_CONTROL_CODE_ENABLE_PROVIDER, TRACE_LEVEL_INFORMATION,
                    kWindowUpdateKeyword, 0, 0, nullptr);
   }
-  for (const GUID& provider : {kMagnification, kDwmApi, kDwmApi7}) {
+  for (const GUID& provider : {kMagnification, kDwmApi, kDwmApi7, kGraphicsCapture}) {
     EnableTraceEx2(g_session, &provider, EVENT_CONTROL_CODE_ENABLE_PROVIDER, TRACE_LEVEL_VERBOSE, kEverything, 0, 0,
                    nullptr);
   }

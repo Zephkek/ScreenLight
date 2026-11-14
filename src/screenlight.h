@@ -10,7 +10,7 @@ namespace screenlight {
 constexpr UINT kRefreshMessage = WM_APP + 2;
 constexpr UINT kShowMessage = WM_APP + 3;
 
-enum class Source { kDuplication, kHiddenDesktop, kRemote, kInput, kScreenRead, kMagnifier, kThumbnail };
+enum class Source { kDuplication, kHiddenDesktop, kRemote, kInput, kScreenRead, kMagnifier, kThumbnail, kCapture };
 
 struct Watcher {
   Source source = Source::kDuplication;
