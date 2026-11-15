@@ -8,7 +8,6 @@
 namespace screenlight {
 namespace {
 
-constexpr wchar_t kServiceName[] = L"ScreenLight";
 constexpr wchar_t kDisplayName[] = L"Screen Light";
 constexpr wchar_t kDescription[] = L"Tells the Screen Light tray icon about programs that read the screen.";
 

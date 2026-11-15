@@ -27,6 +27,7 @@ constexpr COLORREF kInstructionColor = RGB(0x1e, 0x39, 0x5b);
 std::vector<Row> g_rows;
 HWND g_window;
 HWND g_status;
+HWND g_hint;
 HWND g_list;
 HFONT g_font;
 HFONT g_title_font;
@@ -52,8 +53,12 @@ bool same_watcher(const Row& row, const Watcher& w) {
          (w.source == Source::kInput || row.what == w.what);
 }
 
+void layout();
+
 void fill() {
   SetWindowTextW(g_status, status_text().c_str());
+  ShowWindow(g_hint, service_running() ? SW_HIDE : SW_SHOWNA);
+  layout();
   SendMessageW(g_list, WM_SETREDRAW, FALSE, 0);
   ListView_DeleteAllItems(g_list);
   for (size_t i = 0; i < g_rows.size(); ++i) {
@@ -77,8 +82,10 @@ void layout() {
   RECT client;
   GetClientRect(g_window, &client);
   const int margin = px(11), title = px(24);
+  const int hint = (GetWindowLongW(g_hint, GWL_STYLE) & WS_VISIBLE) ? px(20) : 0;
   MoveWindow(g_status, margin, margin, client.right - 2 * margin, title, TRUE);
-  const int top = margin + title + px(7);
+  MoveWindow(g_hint, margin, margin + title, client.right - 2 * margin, hint, TRUE);
+  const int top = margin + title + hint + px(7);
   MoveWindow(g_list, margin, top, client.right - 2 * margin, std::max<int>(0, client.bottom - top - margin), TRUE);
 }
 
@@ -92,7 +99,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
       return 0;
     case WM_CTLCOLORSTATIC: {
       HDC dc = reinterpret_cast<HDC>(wparam);
-      SetTextColor(dc, kInstructionColor);
+      SetTextColor(dc, reinterpret_cast<HWND>(lparam) == g_hint ? GetSysColor(COLOR_WINDOWTEXT) : kInstructionColor);
       SetBkColor(dc, GetSysColor(COLOR_WINDOW));
       return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
     }
@@ -132,10 +139,14 @@ void create(HINSTANCE instance) {
   if (!g_window) return;
   g_status = CreateWindowExW(0, WC_STATICW, L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, g_window,
                              nullptr, instance, nullptr);
+  g_hint = CreateWindowExW(0, WC_STATICW,
+                           L"Install the service from the tray menu to also catch screenshots, recorders and the magnifier.",
+                           WS_CHILD | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, g_window, nullptr, instance, nullptr);
   g_list = CreateWindowExW(0, WC_LISTVIEWW, L"",
                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER,
                            0, 0, 0, 0, g_window, nullptr, instance, nullptr);
   SendMessageW(g_status, WM_SETFONT, reinterpret_cast<WPARAM>(g_title_font), FALSE);
+  SendMessageW(g_hint, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), FALSE);
   SendMessageW(g_list, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), FALSE);
   SetWindowTheme(g_list, L"Explorer", nullptr);
   ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);

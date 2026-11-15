@@ -13,6 +13,8 @@ namespace {
 constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\ScreenLight";
 constexpr wchar_t kHello[] = L"screenlight 1";
 constexpr DWORD kBufferBytes = 64 * 1024;
+constexpr DWORD kInstances = 4;
+constexpr DWORD kClientMs = 1000;
 
 std::wstring hello() {
   wchar_t text[48];
@@ -36,15 +38,55 @@ std::wstring answer(HANDLE pipe, const std::wstring& request) {
   return reply;
 }
 
-void serve(HANDLE pipe) {
+bool transfer(HANDLE pipe, HANDLE done, bool write, void* data, DWORD size, DWORD* moved) {
+  OVERLAPPED overlapped{};
+  overlapped.hEvent = done;
+  ResetEvent(done);
+  const BOOL ok = write ? WriteFile(pipe, data, size, nullptr, &overlapped) : ReadFile(pipe, data, size, nullptr, &overlapped);
+  if (!ok && GetLastError() != ERROR_IO_PENDING) return false;
+  if (WaitForSingleObject(done, kClientMs) != WAIT_OBJECT_0) {
+    CancelIo(pipe);
+    GetOverlappedResult(pipe, &overlapped, moved, TRUE);
+    return false;
+  }
+  return GetOverlappedResult(pipe, &overlapped, moved, FALSE);
+}
+
+void serve(HANDLE pipe, HANDLE done) {
   wchar_t request[64];
   DWORD read = 0;
-  if (!ReadFile(pipe, request, sizeof request - sizeof(wchar_t), &read, nullptr)) return;
+  if (!transfer(pipe, done, false, request, sizeof request - sizeof(wchar_t), &read)) return;
   request[read / sizeof(wchar_t)] = 0;
-  const std::wstring reply = answer(pipe, request);
+  std::wstring reply = answer(pipe, request);
   DWORD written = 0;
-  WriteFile(pipe, reply.data(), DWORD(reply.size() * sizeof(wchar_t)), &written, nullptr);
-  FlushFileBuffers(pipe);
+  if (transfer(pipe, done, true, reply.data(), DWORD(reply.size() * sizeof(wchar_t)), &written)) FlushFileBuffers(pipe);
+}
+
+HANDLE make_pipe(SECURITY_ATTRIBUTES* security) {
+  return CreateNamedPipeW(kPipeName, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+                          PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, kInstances,
+                          kBufferBytes, kBufferBytes, 0, security);
+}
+
+HANDLE next_pipe(SECURITY_ATTRIBUTES* security, HANDLE stop) {
+  HANDLE pipe = make_pipe(security);
+  while (pipe == INVALID_HANDLE_VALUE && WaitForSingleObject(stop, 1000) == WAIT_TIMEOUT) pipe = make_pipe(security);
+  return pipe;
+}
+
+bool wait_for_client(HANDLE pipe, HANDLE done, HANDLE stop) {
+  OVERLAPPED overlapped{};
+  overlapped.hEvent = done;
+  ResetEvent(done);
+  if (ConnectNamedPipe(pipe, &overlapped) || GetLastError() == ERROR_PIPE_CONNECTED) return true;
+  if (GetLastError() != ERROR_IO_PENDING) return false;
+  HANDLE waits[] = {done, stop};
+  if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0) {
+    CancelIo(pipe);
+    return false;
+  }
+  DWORD ignored = 0;
+  return GetOverlappedResult(pipe, &overlapped, &ignored, FALSE);
 }
 
 void calibrate() {
@@ -78,35 +120,20 @@ void serve_pipe(HANDLE stop) {
                                                             &security.lpSecurityDescriptor, nullptr)) {
     return;
   }
-  HANDLE connected = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-  while (WaitForSingleObject(stop, 0) == WAIT_TIMEOUT) {
-    HANDLE pipe = CreateNamedPipeW(kPipeName, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-                                   PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1,
-                                   kBufferBytes, kBufferBytes, 0, &security);
-    if (pipe == INVALID_HANDLE_VALUE) {
-      WaitForSingleObject(stop, 1000);
-      continue;
-    }
-    OVERLAPPED overlapped{};
-    overlapped.hEvent = connected;
-    ResetEvent(connected);
-    bool ready = ConnectNamedPipe(pipe, &overlapped) || GetLastError() == ERROR_PIPE_CONNECTED;
-    if (!ready && GetLastError() == ERROR_IO_PENDING) {
-      HANDLE waits[] = {connected, stop};
-      if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) == WAIT_OBJECT_0) {
-        DWORD ignored = 0;
-        ready = GetOverlappedResult(pipe, &overlapped, &ignored, FALSE);
-      } else {
-        CancelIo(pipe);
-      }
-    }
+  HANDLE done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  HANDLE listening = next_pipe(&security, stop);
+  while (listening != INVALID_HANDLE_VALUE && WaitForSingleObject(stop, 0) == WAIT_TIMEOUT) {
+    const bool ready = wait_for_client(listening, done, stop);
+    HANDLE next = next_pipe(&security, stop);
     if (ready) {
-      serve(pipe);
-      DisconnectNamedPipe(pipe);
+      serve(listening, done);
+      DisconnectNamedPipe(listening);
     }
-    CloseHandle(pipe);
+    CloseHandle(listening);
+    listening = next;
   }
-  CloseHandle(connected);
+  if (listening != INVALID_HANDLE_VALUE) CloseHandle(listening);
+  CloseHandle(done);
   LocalFree(security.lpSecurityDescriptor);
 }
 
@@ -119,6 +146,8 @@ std::wstring ask_service(const wchar_t* request) {
   }
   return std::wstring(reply.data(), read / sizeof(wchar_t));
 }
+
+bool service_running() { return ask_service(L"list").rfind(kHello, 0) == 0; }
 
 std::vector<Watcher> service_watchers() {
   std::vector<Watcher> found;

@@ -9,6 +9,7 @@ namespace screenlight {
 
 constexpr UINT kRefreshMessage = WM_APP + 2;
 constexpr UINT kShowMessage = WM_APP + 3;
+constexpr wchar_t kServiceName[] = L"ScreenLight";
 
 enum class Source { kDuplication, kHiddenDesktop, kRemote, kInput, kScreenRead, kMagnifier, kThumbnail, kCapture };
 
@@ -44,6 +45,7 @@ ULONG read_code();
 void serve_pipe(HANDLE stop);
 std::wstring ask_service(const wchar_t* request);
 std::vector<Watcher> service_watchers();
+bool service_running();
 
 std::wstring process_path(DWORD pid);
 std::wstring process_name(DWORD pid, const char* fallback = nullptr);

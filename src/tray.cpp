@@ -13,6 +13,8 @@ namespace {
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kShow = 1;
 constexpr UINT kExit = 2;
+constexpr UINT kInstallService = 3;
+constexpr UINT kRemoveService = 4;
 constexpr UINT_PTR kPollTimer = 1;
 
 HINSTANCE g_instance;
@@ -64,9 +66,35 @@ void refresh(HWND window) {
   Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
+bool service_installed() {
+  SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+  if (!manager) return false;
+  SC_HANDLE service = OpenServiceW(manager, kServiceName, SERVICE_QUERY_STATUS);
+  if (service) CloseServiceHandle(service);
+  CloseServiceHandle(manager);
+  return service != nullptr;
+}
+
+void run_elevated(HWND window, const wchar_t* verb) {
+  wchar_t self[MAX_PATH];
+  const DWORD length = GetModuleFileNameW(nullptr, self, ARRAYSIZE(self));
+  if (!length || length >= ARRAYSIZE(self)) return;
+  SHELLEXECUTEINFOW info{};
+  info.cbSize = sizeof info;
+  info.hwnd = window;
+  info.lpVerb = L"runas";
+  info.lpFile = self;
+  info.lpParameters = verb;
+  info.nShow = SW_SHOWNORMAL;
+  ShellExecuteExW(&info);
+}
+
 void show_menu(HWND window, int x, int y) {
+  const bool installed = service_installed();
   HMENU menu = CreatePopupMenu();
   AppendMenuW(menu, MF_STRING, kShow, L"Show");
+  AppendMenuW(menu, MF_STRING, installed ? kRemoveService : kInstallService,
+              installed ? L"Remove service..." : L"Install service...");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kExit, L"Exit");
   SetMenuDefaultItem(menu, kShow, FALSE);
@@ -75,6 +103,8 @@ void show_menu(HWND window, int x, int y) {
   PostMessageW(window, WM_NULL, 0, 0);
   DestroyMenu(menu);
   if (picked == kShow) show_window(g_instance);
+  if (picked == kInstallService) run_elevated(window, L"--install");
+  if (picked == kRemoveService) run_elevated(window, L"--uninstall");
   if (picked == kExit) DestroyWindow(window);
 }
 
