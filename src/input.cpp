@@ -71,6 +71,7 @@ USHORT g_send_input;
 HWND g_notify;
 HANDLE g_thread;
 DWORD g_thread_id;
+DWORD g_session;
 DWORD g_last_tid;
 DWORD g_last_pid;
 ULONGLONG g_last_scan;
@@ -107,6 +108,14 @@ USHORT send_input_syscall() {
   return code ? *reinterpret_cast<const uint16_t*>(code + 4) : 0;
 }
 
+bool load_lookup() {
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  g_query_system = reinterpret_cast<QuerySystemFn>(GetProcAddress(ntdll, "NtQuerySystemInformation"));
+  g_query_thread = reinterpret_cast<QueryThreadFn>(GetProcAddress(ntdll, "NtQueryInformationThread"));
+  if (g_query_system && g_query_thread) g_send_input = send_input_syscall();
+  return g_send_input != 0;
+}
+
 bool in_send_input(DWORD tid) {
   HANDLE thread = OpenThread(THREAD_GET_CONTEXT, FALSE, tid);
   if (!thread) return false;
@@ -117,42 +126,15 @@ bool in_send_input(DWORD tid) {
   return inside;
 }
 
-bool find_sender(DWORD* pid, DWORD* tid) {
-  ULONG need = 0;
-  LONG status;
-  while ((status = g_query_system(kProcessInformation, g_snapshot.data(), ULONG(g_snapshot.size()), &need)) ==
-         kInfoLengthMismatch) {
-    g_snapshot.resize(need + 0x10000);
-  }
-  if (status < 0) return false;
-  const DWORD self = GetCurrentProcessId();
-  for (int pass = 0; pass < 2; ++pass) {
-    for (size_t offset = 0;;) {
-      const auto* process = reinterpret_cast<const SystemProcess*>(g_snapshot.data() + offset);
-      const auto* threads = reinterpret_cast<const SystemThread*>(process + 1);
-      const DWORD owner = DWORD(ULONG_PTR(process->pid));
-      for (ULONG i = 0; owner > 4 && owner != self && i < process->threads; ++i) {
-        if (threads[i].state != kWaiting || (threads[i].wait_reason == kWrUserRequest) != (pass == 0)) continue;
-        const DWORD id = DWORD(ULONG_PTR(threads[i].tid));
-        if (!in_send_input(id)) continue;
-        *pid = owner;
-        *tid = id;
-        return true;
-      }
-      if (!process->next) break;
-      offset += process->next;
-    }
-  }
-  return false;
-}
-
-void record(DWORD pid, bool keys, ULONGLONG now) {
+void record(DWORD pid, const std::wstring& name, bool keys, ULONGLONG now) {
   bool fresh = false;
   {
     std::lock_guard<std::mutex> hold(g_lock);
     auto it = std::find_if(g_senders.begin(), g_senders.end(), [pid](const Sender& s) { return s.pid == pid; });
     if (it == g_senders.end()) {
-      it = g_senders.insert(g_senders.end(), Sender{pid, pid ? process_name(pid) : L"Unknown program"});
+      std::wstring label = name;
+      if (label.empty()) label = pid ? process_name(pid) : L"Unknown program";
+      it = g_senders.insert(g_senders.end(), Sender{pid, label});
       fresh = true;
     }
     it->seen = now;
@@ -164,17 +146,20 @@ void record(DWORD pid, bool keys, ULONGLONG now) {
 void injected(bool keys) {
   const ULONGLONG now = GetTickCount64();
   if (g_last_tid && in_send_input(g_last_tid)) {
-    record(g_last_pid, keys, now);
+    record(g_last_pid, std::wstring(), keys, now);
     return;
   }
   if (now - g_last_scan < kScanEveryMs) return;
   g_last_scan = now;
   DWORD pid = 0, tid = 0;
-  if (g_send_input && find_sender(&pid, &tid)) {
+  std::wstring name;
+  if (find_sender(g_session, &pid, &tid)) {
     g_last_pid = pid;
     g_last_tid = tid;
+  } else {
+    pid = service_sender(&name);
   }
-  record(pid, keys, now);
+  record(pid, name, keys, now);
 }
 
 LRESULT CALLBACK mouse_hook(int code, WPARAM wparam, LPARAM lparam) {
@@ -200,11 +185,40 @@ DWORD WINAPI hook_thread(void*) {
 
 }  // namespace
 
+bool find_sender(DWORD session, DWORD* pid, DWORD* tid) {
+  static const bool ready = load_lookup();
+  if (!ready) return false;
+  ULONG need = 0;
+  LONG status;
+  while ((status = g_query_system(kProcessInformation, g_snapshot.data(), ULONG(g_snapshot.size()), &need)) ==
+         kInfoLengthMismatch) {
+    g_snapshot.resize(need + 0x10000);
+  }
+  if (status < 0) return false;
+  const DWORD self = GetCurrentProcessId();
+  for (int pass = 0; pass < 2; ++pass) {
+    for (size_t offset = 0;;) {
+      const auto* process = reinterpret_cast<const SystemProcess*>(g_snapshot.data() + offset);
+      const auto* threads = reinterpret_cast<const SystemThread*>(process + 1);
+      const DWORD owner = DWORD(ULONG_PTR(process->pid));
+      const bool candidate = owner > 4 && owner != self && process->session == session;
+      for (ULONG i = 0; candidate && i < process->threads; ++i) {
+        if (threads[i].state != kWaiting || (threads[i].wait_reason == kWrUserRequest) != (pass == 0)) continue;
+        const DWORD id = DWORD(ULONG_PTR(threads[i].tid));
+        if (!in_send_input(id)) continue;
+        *pid = owner;
+        *tid = id;
+        return true;
+      }
+      if (!process->next) break;
+      offset += process->next;
+    }
+  }
+  return false;
+}
+
 void start_input_watch(HWND notify) {
-  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-  g_query_system = reinterpret_cast<QuerySystemFn>(GetProcAddress(ntdll, "NtQuerySystemInformation"));
-  g_query_thread = reinterpret_cast<QueryThreadFn>(GetProcAddress(ntdll, "NtQueryInformationThread"));
-  if (g_query_system && g_query_thread) g_send_input = send_input_syscall();
+  ProcessIdToSessionId(GetCurrentProcessId(), &g_session);
   g_notify = notify;
   g_thread = CreateThread(nullptr, 0, hook_thread, nullptr, 0, &g_thread_id);
 }

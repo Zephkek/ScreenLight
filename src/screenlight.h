@@ -28,6 +28,7 @@ std::vector<Watcher> collect_watchers();
 
 void start_input_watch(HWND notify);
 void stop_input_watch();
+bool find_sender(DWORD session, DWORD* pid, DWORD* tid);
 
 void track_seen(Source source, DWORD pid, const std::wstring& what, ULONGLONG ttl_ms);
 void track_open(Source source, DWORD pid, const std::wstring& what);
@@ -45,6 +46,7 @@ ULONG read_code();
 void serve_pipe(HANDLE stop);
 std::wstring ask_service(const wchar_t* request);
 std::vector<Watcher> service_watchers();
+DWORD service_sender(std::wstring* name);
 bool service_running();
 
 std::wstring process_path(DWORD pid);

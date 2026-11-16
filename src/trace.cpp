@@ -51,6 +51,13 @@ bool uint_property(PEVENT_RECORD record, const wchar_t* name, ULONG* value) {
   return true;
 }
 
+bool windows_file(DWORD pid, const wchar_t* file) {
+  wchar_t windows[MAX_PATH];
+  const UINT length = GetWindowsDirectoryW(windows, ARRAYSIZE(windows));
+  if (!length || length >= ARRAYSIZE(windows)) return false;
+  return _wcsicmp(process_path(pid).c_str(), (std::wstring(windows, length) + file).c_str()) == 0;
+}
+
 void screen_update(PEVENT_RECORD record) {
   ULONG type = 0;
   if (!uint_property(record, L"Type", &type) || !(type & kSyncRequest)) return;
@@ -60,7 +67,9 @@ void screen_update(PEVENT_RECORD record) {
     g_calibrating = 0;
     return;
   }
-  if (type == g_read_code) track_seen(Source::kScreenRead, pid, L"reads the screen", kReadShowsForMs);
+  if (type == g_read_code && !windows_file(pid, L"\\System32\\consent.exe")) {
+    track_seen(Source::kScreenRead, pid, L"reads the screen", kReadShowsForMs);
+  }
 }
 
 enum class DwmCall { kOther, kRegisterThumbnail, kUnregisterThumbnail, kSharedSurface };
@@ -86,19 +95,12 @@ DwmCall dwm_call(PEVENT_RECORD record) {
   return call;
 }
 
-bool windows_shell(DWORD pid) {
-  wchar_t windows[MAX_PATH];
-  const UINT length = GetWindowsDirectoryW(windows, ARRAYSIZE(windows));
-  if (!length || length >= ARRAYSIZE(windows)) return false;
-  return _wcsicmp(process_path(pid).c_str(), (std::wstring(windows, length) + L"\\explorer.exe").c_str()) == 0;
-}
-
 void dwm_api(PEVENT_RECORD record) {
   if (record->EventHeader.EventDescriptor.Opcode == kStopOpcode) return;
   const DWORD pid = record->EventHeader.ProcessId;
   switch (dwm_call(record)) {
     case DwmCall::kRegisterThumbnail:
-      if (!windows_shell(pid)) track_open(Source::kThumbnail, pid, L"shows a live copy of a window");
+      if (!windows_file(pid, L"\\explorer.exe")) track_open(Source::kThumbnail, pid, L"shows a live copy of a window");
       break;
     case DwmCall::kUnregisterThumbnail:
       track_close(Source::kThumbnail, pid);

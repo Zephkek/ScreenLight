@@ -15,6 +15,8 @@ constexpr wchar_t kHello[] = L"screenlight 1";
 constexpr DWORD kBufferBytes = 64 * 1024;
 constexpr DWORD kInstances = 4;
 constexpr DWORD kClientMs = 1000;
+constexpr DWORD kAskMs = 1000;
+constexpr DWORD kSenderMs = 50;
 
 std::wstring hello() {
   wchar_t text[48];
@@ -29,6 +31,11 @@ std::wstring answer(HANDLE pipe, const std::wstring& request) {
   if (request == L"calibrate") {
     ULONG pid = 0;
     if (GetNamedPipeClientProcessId(pipe, &pid)) begin_calibration(pid);
+    return reply;
+  }
+  if (request == L"sender") {
+    DWORD pid = 0, tid = 0;
+    if (find_sender(session, &pid, &tid)) reply += L"\n" + std::to_wstring(pid) + L"\t" + process_name(pid);
     return reply;
   }
   if (request != L"list") return reply;
@@ -89,6 +96,33 @@ bool wait_for_client(HANDLE pipe, HANDLE done, HANDLE stop) {
   return GetOverlappedResult(pipe, &overlapped, &ignored, FALSE);
 }
 
+HANDLE open_service() {
+  return CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+}
+
+std::wstring ask(const wchar_t* request, DWORD wait_ms) {
+  HANDLE pipe = open_service();
+  if (pipe == INVALID_HANDLE_VALUE && GetLastError() == ERROR_PIPE_BUSY && WaitNamedPipeW(kPipeName, wait_ms)) {
+    pipe = open_service();
+  }
+  if (pipe == INVALID_HANDLE_VALUE) return std::wstring();
+  std::wstring reply;
+  std::vector<wchar_t> buffer(kBufferBytes / sizeof(wchar_t));
+  DWORD mode = PIPE_READMODE_MESSAGE, read = 0;
+  OVERLAPPED overlapped{};
+  overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (overlapped.hEvent && SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr) &&
+      (TransactNamedPipe(pipe, const_cast<wchar_t*>(request), DWORD(wcslen(request) * sizeof(wchar_t)), buffer.data(),
+                         kBufferBytes, nullptr, &overlapped) ||
+       GetLastError() == ERROR_IO_PENDING)) {
+    if (WaitForSingleObject(overlapped.hEvent, wait_ms) != WAIT_OBJECT_0) CancelIo(pipe);
+    if (GetOverlappedResult(pipe, &overlapped, &read, TRUE)) reply.assign(buffer.data(), read / sizeof(wchar_t));
+  }
+  if (overlapped.hEvent) CloseHandle(overlapped.hEvent);
+  CloseHandle(pipe);
+  return reply;
+}
+
 void calibrate() {
   if (ask_service(L"calibrate").rfind(kHello, 0) != 0) return;
   HDC screen = GetDC(nullptr);
@@ -137,14 +171,15 @@ void serve_pipe(HANDLE stop) {
   LocalFree(security.lpSecurityDescriptor);
 }
 
-std::wstring ask_service(const wchar_t* request) {
-  std::vector<wchar_t> reply(kBufferBytes / sizeof(wchar_t) + 1);
-  DWORD read = 0;
-  if (!CallNamedPipeW(kPipeName, const_cast<wchar_t*>(request), DWORD(wcslen(request) * sizeof(wchar_t)), reply.data(),
-                      kBufferBytes, &read, 200)) {
-    return std::wstring();
-  }
-  return std::wstring(reply.data(), read / sizeof(wchar_t));
+std::wstring ask_service(const wchar_t* request) { return ask(request, kAskMs); }
+
+DWORD service_sender(std::wstring* name) {
+  const std::vector<std::wstring> lines = split(ask(L"sender", kSenderMs), L'\n');
+  if (lines.size() < 2 || lines[0].rfind(kHello, 0) != 0) return 0;
+  const std::vector<std::wstring> fields = split(lines[1], L'\t');
+  if (fields.size() != 2) return 0;
+  *name = fields[1];
+  return wcstoul(fields[0].c_str(), nullptr, 10);
 }
 
 bool service_running() { return ask_service(L"list").rfind(kHello, 0) == 0; }
