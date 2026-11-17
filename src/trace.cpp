@@ -106,7 +106,7 @@ void dwm_api(PEVENT_RECORD record) {
       track_close(Source::kThumbnail, pid);
       break;
     case DwmCall::kSharedSurface:
-      if (!tracking(Source::kMagnifier, pid)) track_seen(Source::kThumbnail, pid, L"copies a window through dwm", kReadShowsForMs);
+      if (!tracking(Source::kMagnifier, pid)) track_seen(Source::kThumbnail, pid, L"copies a window", kReadShowsForMs);
       break;
     case DwmCall::kOther:
       break;

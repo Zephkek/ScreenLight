@@ -24,7 +24,7 @@ std::wstring process_name(DWORD pid, const char* fallback) {
   const size_t slash = name.find_last_of(L'\\');
   if (slash != std::wstring::npos) name.erase(0, slash + 1);
   if (name.empty() && fallback) name.assign(fallback, fallback + strlen(fallback));
-  if (name.empty()) name = L"pid " + std::to_wstring(pid);
+  if (name.empty()) name = L"Process " + std::to_wstring(pid);
   return name;
 }
 

@@ -151,8 +151,8 @@ int run_tray(HINSTANCE instance) {
   g_instance = instance;
   g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
   const int size = GetSystemMetrics(SM_CXSMICON);
-  g_off = make_light(RGB(140, 140, 140), size);
-  g_on = make_light(RGB(226, 52, 40), size);
+  g_off = make_light(kIdleColor, size);
+  g_on = make_light(kLitColor, size);
   WNDCLASSW wc{};
   wc.lpfnWndProc = tray_proc;
   wc.hInstance = instance;

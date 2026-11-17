@@ -1,6 +1,8 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <uxtheme.h>
+#include <vsstyle.h>
+#include <vssym32.h>
 
 #include <algorithm>
 #include <string>
@@ -22,7 +24,8 @@ struct Row {
 };
 
 constexpr size_t kMaxRows = 200;
-constexpr COLORREF kInstructionColor = RGB(0x1e, 0x39, 0x5b);
+constexpr int kNowGroup = 1;
+constexpr int kEarlierGroup = 2;
 
 std::vector<Row> g_rows;
 HWND g_window;
@@ -31,6 +34,10 @@ HWND g_hint;
 HWND g_list;
 HFONT g_font;
 HFONT g_title_font;
+HICON g_icons[2][2];
+COLORREF g_title_color;
+bool g_lit;
+bool g_placed;
 int g_dpi = 96;
 
 int px(int value) { return MulDiv(value, g_dpi, 96); }
@@ -41,8 +48,10 @@ std::wstring clock_text(const SYSTEMTIME& time) {
   return text;
 }
 
+int active_rows() { return int(std::count_if(g_rows.begin(), g_rows.end(), [](const Row& r) { return r.active; })); }
+
 std::wstring status_text() {
-  const auto active = std::count_if(g_rows.begin(), g_rows.end(), [](const Row& r) { return r.active; });
+  const int active = active_rows();
   if (active == 0) return L"Nothing is watching your screen or input right now.";
   if (active == 1) return L"1 program is watching right now.";
   return std::to_wstring(active) + L" programs are watching right now.";
@@ -53,29 +62,27 @@ bool same_watcher(const Row& row, const Watcher& w) {
          (w.source == Source::kInput || row.what == w.what);
 }
 
-void layout();
-
-void fill() {
-  SetWindowTextW(g_status, status_text().c_str());
-  ShowWindow(g_hint, service_running() ? SW_HIDE : SW_SHOWNA);
-  layout();
-  SendMessageW(g_list, WM_SETREDRAW, FALSE, 0);
-  ListView_DeleteAllItems(g_list);
-  for (size_t i = 0; i < g_rows.size(); ++i) {
-    const Row& row = g_rows[i];
-    LVITEMW item{};
-    item.mask = LVIF_TEXT;
-    item.iItem = int(i);
-    item.pszText = const_cast<wchar_t*>(row.name.c_str());
-    const int at = ListView_InsertItem(g_list, &item);
-    std::wstring started = clock_text(row.started);
-    std::wstring ended = row.active ? L"now" : clock_text(row.ended);
-    ListView_SetItemText(g_list, at, 1, const_cast<wchar_t*>(row.what.c_str()));
-    ListView_SetItemText(g_list, at, 2, started.data());
-    ListView_SetItemText(g_list, at, 3, ended.data());
+void load_title_color() {
+  g_title_color = GetSysColor(COLOR_WINDOWTEXT);
+  if (HTHEME theme = OpenThemeData(g_window, L"TEXTSTYLE")) {
+    COLORREF color;
+    if (SUCCEEDED(GetThemeColor(theme, TEXT_MAININSTRUCTION, 0, TMT_TEXTCOLOR, &color))) g_title_color = color;
+    CloseThemeData(theme);
   }
-  SendMessageW(g_list, WM_SETREDRAW, TRUE, 0);
-  InvalidateRect(g_list, nullptr, TRUE);
+}
+
+void show_lit(bool lit) {
+  g_lit = lit;
+  SendMessageW(g_window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(g_icons[lit][0]));
+  SendMessageW(g_window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(g_icons[lit][1]));
+}
+
+void fit_columns() {
+  RECT client;
+  GetClientRect(g_list, &client);
+  int fixed = 0;
+  for (int column : {0, 2, 3}) fixed += ListView_GetColumnWidth(g_list, column);
+  ListView_SetColumnWidth(g_list, 1, std::max(px(120), int(client.right) - fixed));
 }
 
 void layout() {
@@ -87,6 +94,68 @@ void layout() {
   MoveWindow(g_hint, margin, margin + title, client.right - 2 * margin, hint, TRUE);
   const int top = margin + title + hint + px(7);
   MoveWindow(g_list, margin, top, client.right - 2 * margin, std::max<int>(0, client.bottom - top - margin), TRUE);
+  fit_columns();
+}
+
+void fill() {
+  SetWindowTextW(g_status, status_text().c_str());
+  ShowWindow(g_hint, service_running() ? SW_HIDE : SW_SHOWNA);
+  layout();
+  SendMessageW(g_list, WM_SETREDRAW, FALSE, 0);
+  ListView_DeleteAllItems(g_list);
+  for (size_t i = 0; i < g_rows.size(); ++i) {
+    const Row& row = g_rows[i];
+    LVITEMW item{};
+    item.mask = LVIF_TEXT | LVIF_GROUPID;
+    item.iItem = int(i);
+    item.iGroupId = row.active ? kNowGroup : kEarlierGroup;
+    item.pszText = const_cast<wchar_t*>(row.name.c_str());
+    const int at = ListView_InsertItem(g_list, &item);
+    std::wstring started = clock_text(row.started);
+    std::wstring ended = row.active ? L"now" : clock_text(row.ended);
+    ListView_SetItemText(g_list, at, 1, const_cast<wchar_t*>(row.what.c_str()));
+    ListView_SetItemText(g_list, at, 2, started.data());
+    ListView_SetItemText(g_list, at, 3, ended.data());
+  }
+  fit_columns();
+  SendMessageW(g_list, WM_SETREDRAW, TRUE, 0);
+  InvalidateRect(g_list, nullptr, TRUE);
+}
+
+void place_near_tray() {
+  POINT tray{0, 0};
+  if (HWND bar = FindWindowW(L"Shell_TrayWnd", nullptr)) {
+    HWND notify = FindWindowExW(bar, nullptr, L"TrayNotifyWnd", nullptr);
+    RECT r;
+    if (GetWindowRect(notify ? notify : bar, &r)) tray = {(r.left + r.right) / 2, (r.top + r.bottom) / 2};
+  }
+  MONITORINFO monitor{};
+  monitor.cbSize = sizeof monitor;
+  if (!GetMonitorInfoW(MonitorFromPoint(tray, MONITOR_DEFAULTTOPRIMARY), &monitor)) return;
+  const RECT& area = monitor.rcWork;
+  RECT window;
+  GetWindowRect(g_window, &window);
+  const int width = window.right - window.left, height = window.bottom - window.top, gap = px(12);
+  const int x = tray.x < (area.left + area.right) / 2 ? area.left + gap : area.right - width - gap;
+  const int y = tray.y < (area.top + area.bottom) / 2 ? area.top + gap : area.bottom - height - gap;
+  SetWindowPos(g_window, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+LRESULT notify(HWND window, NMHDR* header) {
+  if (header->hwndFrom != g_list) return 0;
+  switch (header->code) {
+    case LVN_KEYDOWN:
+      if (reinterpret_cast<NMLVKEYDOWN*>(header)->wVKey == VK_ESCAPE) ShowWindow(window, SW_HIDE);
+      return 0;
+    case LVN_GETEMPTYMARKUP: {
+      auto* markup = reinterpret_cast<NMLVEMPTYMARKUP*>(header);
+      markup->dwFlags = EMF_CENTERED;
+      lstrcpynW(markup->szMarkup, L"Programs that watch your screen or input will show up here.",
+                ARRAYSIZE(markup->szMarkup));
+      return TRUE;
+    }
+  }
+  return 0;
 }
 
 LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -95,19 +164,48 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
       if (g_list) layout();
       return 0;
     case WM_GETMINMAXINFO:
-      reinterpret_cast<MINMAXINFO*>(lparam)->ptMinTrackSize = {px(380), px(220)};
+      reinterpret_cast<MINMAXINFO*>(lparam)->ptMinTrackSize = {px(420), px(240)};
       return 0;
+    case WM_THEMECHANGED:
+      load_title_color();
+      InvalidateRect(g_status, nullptr, TRUE);
+      break;
     case WM_CTLCOLORSTATIC: {
       HDC dc = reinterpret_cast<HDC>(wparam);
-      SetTextColor(dc, reinterpret_cast<HWND>(lparam) == g_hint ? GetSysColor(COLOR_WINDOWTEXT) : kInstructionColor);
+      SetTextColor(dc, reinterpret_cast<HWND>(lparam) == g_status ? g_title_color : GetSysColor(COLOR_WINDOWTEXT));
       SetBkColor(dc, GetSysColor(COLOR_WINDOW));
       return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
     }
+    case WM_NOTIFY:
+      return notify(window, reinterpret_cast<NMHDR*>(lparam));
+    case WM_SETFOCUS:
+      SetFocus(g_list);
+      return 0;
     case WM_CLOSE:
       ShowWindow(window, SW_HIDE);
       return 0;
   }
   return DefWindowProcW(window, message, wparam, lparam);
+}
+
+void add_group(int id, const wchar_t* title) {
+  LVGROUP group{};
+  group.cbSize = sizeof group;
+  group.mask = LVGF_HEADER | LVGF_GROUPID;
+  group.pszHeader = const_cast<wchar_t*>(title);
+  group.iGroupId = id;
+  ListView_InsertGroup(g_list, -1, &group);
+}
+
+int time_column_width() {
+  SYSTEMTIME widest{};
+  GetLocalTime(&widest);
+  widest.wHour = 23;
+  widest.wMinute = 58;
+  widest.wSecond = 58;
+  const int text = std::max(ListView_GetStringWidth(g_list, clock_text(widest).c_str()),
+                            ListView_GetStringWidth(g_list, L"Until"));
+  return text + px(24);
 }
 
 void create(HINSTANCE instance) {
@@ -123,20 +221,25 @@ void create(HINSTANCE instance) {
   g_title_font = CreateFontIndirectW(&title);
   INITCOMMONCONTROLSEX controls{sizeof controls, ICC_LISTVIEW_CLASSES};
   InitCommonControlsEx(&controls);
+  for (int lit = 0; lit < 2; ++lit) {
+    g_icons[lit][0] = make_light(lit ? kLitColor : kIdleColor, GetSystemMetrics(SM_CXSMICON));
+    g_icons[lit][1] = make_light(lit ? kLitColor : kIdleColor, GetSystemMetrics(SM_CXICON));
+  }
 
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof wc;
   wc.lpfnWndProc = window_proc;
   wc.hInstance = instance;
-  wc.hIcon = make_light(RGB(140, 140, 140), GetSystemMetrics(SM_CXICON));
-  wc.hIconSm = make_light(RGB(140, 140, 140), GetSystemMetrics(SM_CXSMICON));
+  wc.hIcon = g_icons[0][1];
+  wc.hIconSm = g_icons[0][0];
   wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
   wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
   wc.lpszClassName = L"ScreenLightWindow";
   RegisterClassExW(&wc);
   g_window = CreateWindowExW(0, wc.lpszClassName, L"Screen Light", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                             px(640), px(360), nullptr, nullptr, instance, nullptr);
+                             px(660), px(380), nullptr, nullptr, instance, nullptr);
   if (!g_window) return;
+  load_title_color();
   g_status = CreateWindowExW(0, WC_STATICW, L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, g_window,
                              nullptr, instance, nullptr);
   g_hint = CreateWindowExW(0, WC_STATICW,
@@ -150,17 +253,21 @@ void create(HINSTANCE instance) {
   SendMessageW(g_list, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), FALSE);
   SetWindowTheme(g_list, L"Explorer", nullptr);
   ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+  const int time = time_column_width();
   const struct {
     const wchar_t* title;
     int width;
-  } columns[] = {{L"Program", 150}, {L"What", 260}, {L"From", 85}, {L"Until", 85}};
+  } columns[] = {{L"Program", px(170)}, {L"What", px(200)}, {L"From", time}, {L"Until", time}};
   for (int i = 0; i < int(ARRAYSIZE(columns)); ++i) {
     LVCOLUMNW column{};
     column.mask = LVCF_TEXT | LVCF_WIDTH;
     column.pszText = const_cast<wchar_t*>(columns[i].title);
-    column.cx = px(columns[i].width);
+    column.cx = columns[i].width;
     ListView_InsertColumn(g_list, i, &column);
   }
+  ListView_EnableGroupView(g_list, TRUE);
+  add_group(kNowGroup, L"Right now");
+  add_group(kEarlierGroup, L"Earlier");
   layout();
 }
 
@@ -192,13 +299,19 @@ void track(const std::vector<Watcher>& watchers) {
     changed = true;
   }
   if (g_rows.size() > kMaxRows) g_rows.resize(kMaxRows);
+  if (g_window && (active_rows() > 0) != g_lit) show_lit(!g_lit);
   if (changed && g_window && IsWindowVisible(g_window)) fill();
 }
 
 void show_window(HINSTANCE instance) {
   if (!g_window) create(instance);
   if (!g_window) return;
+  show_lit(active_rows() > 0);
   fill();
+  if (!g_placed) {
+    place_near_tray();
+    g_placed = true;
+  }
   ShowWindow(g_window, IsIconic(g_window) ? SW_RESTORE : SW_SHOW);
   SetForegroundWindow(g_window);
 }

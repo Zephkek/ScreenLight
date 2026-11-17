@@ -26,7 +26,7 @@ std::wstring session_user(DWORD session) {
 
 std::vector<Watcher> remote_viewers() {
   std::vector<Watcher> found;
-  if (GetSystemMetrics(kRemoteControl)) found.push_back({Source::kRemote, 0, L"Someone", L"is remote controlling this session"});
+  if (GetSystemMetrics(kRemoteControl)) found.push_back({Source::kRemote, 0, L"Someone", L"controls this session remotely"});
   WTS_SESSION_INFOW* sessions = nullptr;
   DWORD count = 0;
   if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &sessions, &count)) {
@@ -34,7 +34,7 @@ std::vector<Watcher> remote_viewers() {
       if (sessions[i].State != WTSShadow) continue;
       std::wstring user = session_user(sessions[i].SessionId);
       if (user.empty()) user = L"Session " + std::to_wstring(sessions[i].SessionId);
-      found.push_back({Source::kRemote, 0, user, L"is shadowing a session"});
+      found.push_back({Source::kRemote, 0, user, L"watches a session remotely"});
     }
     WTSFreeMemory(sessions);
   }

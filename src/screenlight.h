@@ -10,6 +10,8 @@ namespace screenlight {
 constexpr UINT kRefreshMessage = WM_APP + 2;
 constexpr UINT kShowMessage = WM_APP + 3;
 constexpr wchar_t kServiceName[] = L"ScreenLight";
+constexpr COLORREF kIdleColor = RGB(140, 140, 140);
+constexpr COLORREF kLitColor = RGB(226, 52, 40);
 
 enum class Source { kDuplication, kHiddenDesktop, kRemote, kInput, kScreenRead, kMagnifier, kThumbnail, kCapture };
 

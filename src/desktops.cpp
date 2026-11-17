@@ -56,7 +56,7 @@ std::vector<Watcher> hidden_desktop_processes() {
     }
     for (DWORD pid : pids) {
       if (pid == GetCurrentProcessId() || desktop_helper(pid) || process_gone(pid)) continue;
-      found.push_back({Source::kHiddenDesktop, pid, process_name(pid), L"runs on hidden desktop " + name});
+      found.push_back({Source::kHiddenDesktop, pid, process_name(pid), L"runs on a hidden desktop \"" + name + L"\""});
     }
   }
   return found;

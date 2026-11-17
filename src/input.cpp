@@ -239,9 +239,9 @@ std::vector<Watcher> input_senders() {
                                  [now](const Sender& s) { return now - s.seen > kForgetAfterMs; }),
                   g_senders.end());
   for (const Sender& s : g_senders) {
-    const wchar_t* what = s.keys && s.mouse ? L"is sending keys and mouse input"
-                          : s.keys          ? L"is sending keys"
-                                            : L"is sending mouse input";
+    const wchar_t* what = s.keys && s.mouse ? L"simulates key presses and mouse input"
+                          : s.keys          ? L"simulates key presses"
+                                            : L"simulates mouse input";
     found.push_back({Source::kInput, s.pid, s.name, what});
   }
   return found;
