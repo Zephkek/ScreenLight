@@ -49,6 +49,7 @@ struct LastSyscall {
 struct Sender {
   DWORD pid = 0;
   std::wstring name;
+  std::wstring path;
   ULONGLONG seen = 0;
   bool keys = false;
   bool mouse = false;
@@ -126,7 +127,7 @@ bool in_send_input(DWORD tid) {
   return inside;
 }
 
-void record(DWORD pid, const std::wstring& name, bool keys, ULONGLONG now) {
+void record(DWORD pid, const std::wstring& name, const std::wstring& path, bool keys, ULONGLONG now) {
   bool fresh = false;
   {
     std::lock_guard<std::mutex> hold(g_lock);
@@ -134,7 +135,7 @@ void record(DWORD pid, const std::wstring& name, bool keys, ULONGLONG now) {
     if (it == g_senders.end()) {
       std::wstring label = name;
       if (label.empty()) label = pid ? process_name(pid) : L"Unknown program";
-      it = g_senders.insert(g_senders.end(), Sender{pid, label});
+      it = g_senders.insert(g_senders.end(), Sender{pid, label, path.empty() && pid ? process_path(pid) : path});
       fresh = true;
     }
     it->seen = now;
@@ -146,20 +147,20 @@ void record(DWORD pid, const std::wstring& name, bool keys, ULONGLONG now) {
 void injected(bool keys) {
   const ULONGLONG now = GetTickCount64();
   if (g_last_tid && in_send_input(g_last_tid)) {
-    record(g_last_pid, std::wstring(), keys, now);
+    record(g_last_pid, std::wstring(), std::wstring(), keys, now);
     return;
   }
   if (now - g_last_scan < kScanEveryMs) return;
   g_last_scan = now;
   DWORD pid = 0, tid = 0;
-  std::wstring name;
+  std::wstring name, path;
   if (find_sender(g_session, &pid, &tid)) {
     g_last_pid = pid;
     g_last_tid = tid;
   } else {
-    pid = service_sender(&name);
+    pid = service_sender(&name, &path);
   }
-  record(pid, name, keys, now);
+  record(pid, name, path, keys, now);
 }
 
 LRESULT CALLBACK mouse_hook(int code, WPARAM wparam, LPARAM lparam) {
@@ -242,7 +243,7 @@ std::vector<Watcher> input_senders() {
     const wchar_t* what = s.keys && s.mouse ? L"simulates key presses and mouse input"
                           : s.keys          ? L"simulates key presses"
                                             : L"simulates mouse input";
-    found.push_back({Source::kInput, s.pid, s.name, what});
+    found.push_back({Source::kInput, s.pid, s.name, what, s.path});
   }
   return found;
 }

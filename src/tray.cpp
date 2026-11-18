@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <objbase.h>
 #include <shellapi.h>
 #include <windowsx.h>
 
@@ -11,11 +12,13 @@ namespace screenlight {
 namespace {
 
 constexpr UINT kTrayMessage = WM_APP + 1;
-constexpr UINT kShow = 1;
+constexpr UINT kOpen = 1;
 constexpr UINT kExit = 2;
-constexpr UINT kInstallService = 3;
-constexpr UINT kRemoveService = 4;
+constexpr UINT kService = 3;
+constexpr UINT kStartup = 4;
 constexpr UINT_PTR kPollTimer = 1;
+constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kRunValue[] = L"Screen Light";
 
 HINSTANCE g_instance;
 UINT g_taskbar_created;
@@ -75,36 +78,84 @@ bool service_installed() {
   return service != nullptr;
 }
 
-void run_elevated(HWND window, const wchar_t* verb) {
+std::wstring startup_command() {
   wchar_t self[MAX_PATH];
   const DWORD length = GetModuleFileNameW(nullptr, self, ARRAYSIZE(self));
-  if (!length || length >= ARRAYSIZE(self)) return;
-  SHELLEXECUTEINFOW info{};
-  info.cbSize = sizeof info;
-  info.hwnd = window;
-  info.lpVerb = L"runas";
-  info.lpFile = self;
-  info.lpParameters = verb;
-  info.nShow = SW_SHOWNORMAL;
-  ShellExecuteExW(&info);
+  if (!length || length >= ARRAYSIZE(self)) return std::wstring();
+  return L"\"" + std::wstring(self, length) + L"\" --tray";
+}
+
+bool starts_with_windows() {
+  wchar_t value[MAX_PATH * 2];
+  DWORD size = sizeof value;
+  if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) return false;
+  return _wcsicmp(value, startup_command().c_str()) == 0;
+}
+
+void start_with_windows(bool on) {
+  HKEY key;
+  if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) return;
+  const std::wstring command = startup_command();
+  if (on && !command.empty()) {
+    RegSetValueExW(key, kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
+                   DWORD((command.size() + 1) * sizeof(wchar_t)));
+  } else {
+    RegDeleteValueW(key, kRunValue);
+  }
+  RegCloseKey(key);
+}
+
+HBITMAP shield_bitmap() {
+  SHSTOCKICONINFO stock{};
+  stock.cbSize = sizeof stock;
+  if (FAILED(SHGetStockIconInfo(SIID_SHIELD, SHGSI_ICON | SHGSI_SMALLICON, &stock))) return nullptr;
+  const int cx = GetSystemMetrics(SM_CXSMICON), cy = GetSystemMetrics(SM_CYSMICON);
+  BITMAPINFO bi{};
+  bi.bmiHeader.biSize = sizeof bi.bmiHeader;
+  bi.bmiHeader.biWidth = cx;
+  bi.bmiHeader.biHeight = -cy;
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  void* bits = nullptr;
+  HDC dc = CreateCompatibleDC(nullptr);
+  HBITMAP bitmap = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+  if (bitmap) {
+    HGDIOBJ old = SelectObject(dc, bitmap);
+    DrawIconEx(dc, 0, 0, stock.hIcon, cx, cy, 0, nullptr, DI_NORMAL);
+    SelectObject(dc, old);
+  }
+  DeleteDC(dc);
+  DestroyIcon(stock.hIcon);
+  return bitmap;
 }
 
 void show_menu(HWND window, int x, int y) {
   const bool installed = service_installed();
+  const bool startup = starts_with_windows();
   HMENU menu = CreatePopupMenu();
-  AppendMenuW(menu, MF_STRING, kShow, L"Show");
-  AppendMenuW(menu, MF_STRING, installed ? kRemoveService : kInstallService,
-              installed ? L"Remove service..." : L"Install service...");
+  AppendMenuW(menu, MF_STRING, kOpen, L"Open Screen Light");
+  AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(menu, MF_STRING | (startup ? MF_CHECKED : MF_UNCHECKED), kStartup, L"Start with Windows");
+  AppendMenuW(menu, MF_STRING | (installed ? MF_CHECKED : MF_UNCHECKED), kService, L"Detect screenshots and recorders");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kExit, L"Exit");
-  SetMenuDefaultItem(menu, kShow, FALSE);
+  SetMenuDefaultItem(menu, kOpen, FALSE);
+  HBITMAP shield = shield_bitmap();
+  if (shield) {
+    MENUITEMINFOW item{};
+    item.cbSize = sizeof item;
+    item.fMask = MIIM_BITMAP;
+    item.hbmpItem = shield;
+    SetMenuItemInfoW(menu, kService, FALSE, &item);
+  }
   SetForegroundWindow(window);
   const UINT picked = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, x, y, 0, window, nullptr);
   PostMessageW(window, WM_NULL, 0, 0);
   DestroyMenu(menu);
-  if (picked == kShow) show_window(g_instance);
-  if (picked == kInstallService) run_elevated(window, L"--install");
-  if (picked == kRemoveService) run_elevated(window, L"--uninstall");
+  if (shield) DeleteObject(shield);
+  if (picked == kOpen) show_window(g_instance);
+  if (picked == kStartup) start_with_windows(!startup);
+  if (picked == kService) run_elevated(window, installed ? L"--uninstall" : L"--install");
   if (picked == kExit) DestroyWindow(window);
 }
 
@@ -147,8 +198,23 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
 
 }  // namespace
 
-int run_tray(HINSTANCE instance) {
+void run_elevated(HWND window, const wchar_t* verb) {
+  wchar_t self[MAX_PATH];
+  const DWORD length = GetModuleFileNameW(nullptr, self, ARRAYSIZE(self));
+  if (!length || length >= ARRAYSIZE(self)) return;
+  SHELLEXECUTEINFOW info{};
+  info.cbSize = sizeof info;
+  info.hwnd = window;
+  info.lpVerb = L"runas";
+  info.lpFile = self;
+  info.lpParameters = verb;
+  info.nShow = SW_SHOWNORMAL;
+  ShellExecuteExW(&info);
+}
+
+int run_tray(HINSTANCE instance, bool show) {
   g_instance = instance;
+  CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
   g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
   const int size = GetSystemMetrics(SM_CXSMICON);
   g_off = make_light(kIdleColor, size);
@@ -166,12 +232,14 @@ int run_tray(HINSTANCE instance) {
   start_input_watch(window);
   refresh(window);
   SetTimer(window, kPollTimer, 1000, nullptr);
+  if (show) show_window(instance);
   MSG msg;
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }
   stop_input_watch();
+  CoUninitialize();
   DestroyIcon(g_on);
   DestroyIcon(g_off);
   return 0;

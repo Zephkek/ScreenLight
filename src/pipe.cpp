@@ -18,6 +18,8 @@ constexpr DWORD kClientMs = 1000;
 constexpr DWORD kAskMs = 1000;
 constexpr DWORD kSenderMs = 50;
 
+bool g_service_seen;
+
 std::wstring hello() {
   wchar_t text[48];
   swprintf(text, ARRAYSIZE(text), L"%ls %lx", kHello, read_code());
@@ -35,12 +37,14 @@ std::wstring answer(HANDLE pipe, const std::wstring& request) {
   }
   if (request == L"sender") {
     DWORD pid = 0, tid = 0;
-    if (find_sender(session, &pid, &tid)) reply += L"\n" + std::to_wstring(pid) + L"\t" + process_name(pid);
+    if (find_sender(session, &pid, &tid)) {
+      reply += L"\n" + std::to_wstring(pid) + L"\t" + process_name(pid) + L"\t" + process_path(pid);
+    }
     return reply;
   }
   if (request != L"list") return reply;
   for (const Watcher& w : tracked(session)) {
-    reply += L"\n" + std::to_wstring(int(w.source)) + L"\t" + std::to_wstring(w.pid) + L"\t" + w.name + L"\t" + w.what;
+    reply += L"\n" + std::to_wstring(int(w.source)) + L"\t" + std::to_wstring(w.pid) + L"\t" + w.name + L"\t" + w.what + L"\t" + w.path;
   }
   return reply;
 }
@@ -173,21 +177,23 @@ void serve_pipe(HANDLE stop) {
 
 std::wstring ask_service(const wchar_t* request) { return ask(request, kAskMs); }
 
-DWORD service_sender(std::wstring* name) {
+DWORD service_sender(std::wstring* name, std::wstring* path) {
   const std::vector<std::wstring> lines = split(ask(L"sender", kSenderMs), L'\n');
   if (lines.size() < 2 || lines[0].rfind(kHello, 0) != 0) return 0;
   const std::vector<std::wstring> fields = split(lines[1], L'\t');
-  if (fields.size() != 2) return 0;
+  if (fields.size() != 3) return 0;
   *name = fields[1];
+  *path = fields[2];
   return wcstoul(fields[0].c_str(), nullptr, 10);
 }
 
-bool service_running() { return ask_service(L"list").rfind(kHello, 0) == 0; }
+bool service_running() { return g_service_seen; }
 
 std::vector<Watcher> service_watchers() {
   std::vector<Watcher> found;
   const std::vector<std::wstring> lines = split(ask_service(L"list"), L'\n');
-  if (lines.empty() || lines[0].rfind(kHello, 0) != 0) return found;
+  g_service_seen = !lines.empty() && lines[0].rfind(kHello, 0) == 0;
+  if (!g_service_seen) return found;
   static ULONGLONG last_calibration;
   if (!wcstoul(lines[0].c_str() + wcslen(kHello), nullptr, 16) && GetTickCount64() - last_calibration > 30000) {
     last_calibration = GetTickCount64();
@@ -195,8 +201,8 @@ std::vector<Watcher> service_watchers() {
   }
   for (size_t i = 1; i < lines.size(); ++i) {
     const std::vector<std::wstring> fields = split(lines[i], L'\t');
-    if (fields.size() != 4) continue;
-    found.push_back({Source(_wtoi(fields[0].c_str())), DWORD(_wtoi(fields[1].c_str())), fields[2], fields[3]});
+    if (fields.size() != 5) continue;
+    found.push_back({Source(_wtoi(fields[0].c_str())), DWORD(_wtoi(fields[1].c_str())), fields[2], fields[3], fields[4]});
   }
   return found;
 }

@@ -7,10 +7,10 @@
 
 namespace {
 
-int run_tray_once(HINSTANCE instance) {
+int run_tray_once(HINSTANCE instance, bool show) {
   HANDLE once = CreateMutexW(nullptr, TRUE, L"Local\\ScreenLight");
   if (GetLastError() == ERROR_ALREADY_EXISTS) {
-    if (HWND running = FindWindowW(L"ScreenLight", nullptr)) {
+    if (HWND running = show ? FindWindowW(L"ScreenLight", nullptr) : nullptr) {
       DWORD pid = 0;
       GetWindowThreadProcessId(running, &pid);
       AllowSetForegroundWindow(pid);
@@ -18,7 +18,7 @@ int run_tray_once(HINSTANCE instance) {
     }
     return 0;
   }
-  const int code = screenlight::run_tray(instance);
+  const int code = screenlight::run_tray(instance, show);
   if (once) CloseHandle(once);
   return code;
 }
@@ -32,5 +32,5 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   if (wcscmp(verb, L"--service") == 0) return screenlight::run_service();
   if (wcscmp(verb, L"--install") == 0) return screenlight::install_service();
   if (wcscmp(verb, L"--uninstall") == 0) return screenlight::uninstall_service();
-  return run_tray_once(instance);
+  return run_tray_once(instance, wcscmp(verb, L"--tray") != 0);
 }

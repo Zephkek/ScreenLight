@@ -20,6 +20,7 @@ struct Watcher {
   DWORD pid = 0;
   std::wstring name;
   std::wstring what;
+  std::wstring path;
 };
 
 std::vector<Watcher> duplicating_processes();
@@ -48,7 +49,7 @@ ULONG read_code();
 void serve_pipe(HANDLE stop);
 std::wstring ask_service(const wchar_t* request);
 std::vector<Watcher> service_watchers();
-DWORD service_sender(std::wstring* name);
+DWORD service_sender(std::wstring* name, std::wstring* path);
 bool service_running();
 
 std::wstring process_path(DWORD pid);
@@ -60,7 +61,8 @@ HICON make_light(COLORREF color, int size);
 void track(const std::vector<Watcher>& watchers);
 void show_window(HINSTANCE instance);
 
-int run_tray(HINSTANCE instance);
+int run_tray(HINSTANCE instance, bool show);
+void run_elevated(HWND window, const wchar_t* verb);
 
 int run_service();
 int install_service();

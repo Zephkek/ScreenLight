@@ -16,6 +16,7 @@ struct Tracked {
   DWORD session = 0;
   std::wstring name;
   std::wstring what;
+  std::wstring path;
   ULONGLONG until = 0;
   int open = 0;
 };
@@ -30,7 +31,7 @@ Tracked& entry(Source source, DWORD pid, const std::wstring& what) {
     it->what = what;
     return *it;
   }
-  Tracked fresh{source, pid, 0, process_name(pid), what};
+  Tracked fresh{source, pid, 0, process_name(pid), what, process_path(pid)};
   ProcessIdToSessionId(pid, &fresh.session);
   return g_tracked.emplace_back(std::move(fresh));
 }
@@ -73,7 +74,7 @@ std::vector<Watcher> tracked(DWORD session) {
                   g_tracked.end());
   std::vector<Watcher> found;
   for (const Tracked& t : g_tracked) {
-    if (t.session == session) found.push_back({t.source, t.pid, t.name, t.what});
+    if (t.session == session) found.push_back({t.source, t.pid, t.name, t.what, t.path});
   }
   return found;
 }
