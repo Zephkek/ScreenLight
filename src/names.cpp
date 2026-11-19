@@ -28,6 +28,21 @@ std::wstring process_name(DWORD pid, const char* fallback) {
   return name;
 }
 
+std::vector<char> file_bytes(const std::wstring& path) {
+  std::vector<char> bytes;
+  HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (file == INVALID_HANDLE_VALUE) return bytes;
+  LARGE_INTEGER size{};
+  if (GetFileSizeEx(file, &size) && size.QuadPart > 0 && size.QuadPart < 64 * 1024 * 1024) {
+    bytes.resize(size_t(size.QuadPart));
+    DWORD read = 0;
+    if (!ReadFile(file, bytes.data(), DWORD(bytes.size()), &read, nullptr) || read != bytes.size()) bytes.clear();
+  }
+  CloseHandle(file);
+  return bytes;
+}
+
 bool process_gone(DWORD pid) {
   HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid);
   if (!process) return GetLastError() == ERROR_INVALID_PARAMETER;

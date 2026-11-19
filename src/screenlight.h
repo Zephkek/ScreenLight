@@ -14,7 +14,7 @@ constexpr wchar_t kServiceName[] = L"ScreenLight";
 constexpr COLORREF kIdleColor = RGB(140, 140, 140);
 constexpr COLORREF kLitColor = RGB(226, 52, 40);
 
-enum class Source { kDuplication, kHiddenDesktop, kRemote, kInput, kScreenRead, kMagnifier, kThumbnail, kCapture };
+enum class Source { kDuplication, kHiddenDesktop, kRemote, kInput, kScreenRead, kMagnifier, kThumbnail, kCapture, kKeyboard };
 
 struct NoCase {
   bool operator()(const std::wstring& a, const std::wstring& b) const { return _wcsicmp(a.c_str(), b.c_str()) < 0; }
@@ -45,6 +45,7 @@ bool tracking(Source source, DWORD pid);
 std::vector<Watcher> tracked(DWORD session);
 
 bool start_trace();
+bool flush_needed();
 void flush_trace();
 void stop_trace();
 void WINAPI handle_trace_event(struct _EVENT_RECORD* record);
@@ -60,6 +61,7 @@ bool service_running();
 std::wstring process_path(DWORD pid);
 std::wstring process_name(DWORD pid, const char* fallback = nullptr);
 bool process_gone(DWORD pid);
+std::vector<char> file_bytes(const std::wstring& path);
 
 HICON make_light(COLORREF color, int size);
 

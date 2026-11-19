@@ -1,10 +1,11 @@
 import os
 import subprocess
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MINGW = os.environ.get('SCREENLIGHT_MINGW', 'D:/toolchains/llvm-mingw-20261020-msvcrt-x86_64')
 SRC = os.path.join(HERE, 'src')
-OUT = os.path.join(HERE, 'out')
+OUT = os.path.join(HERE, sys.argv[1] if len(sys.argv) > 1 else 'out')
 WIN7 = ['-Wl,--major-subsystem-version,6', '-Wl,--minor-subsystem-version,1', '-Wl,--major-os-version,6',
         '-Wl,--minor-os-version,1']
 LIBS = ['-lcomctl32', '-luxtheme', '-lwtsapi32', '-ladvapi32', '-lshell32', '-lole32', '-ltdh']
