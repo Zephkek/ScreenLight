@@ -28,10 +28,6 @@ struct Row {
   bool active = true;
 };
 
-struct NoCase {
-  bool operator()(const std::wstring& a, const std::wstring& b) const { return _wcsicmp(a.c_str(), b.c_str()) < 0; }
-};
-
 constexpr size_t kMaxRows = 200;
 constexpr int kNowGroup = 1;
 constexpr int kEarlierGroup = 2;
@@ -377,16 +373,18 @@ void create(HINSTANCE instance) {
 
 }  // namespace
 
-void track(const std::vector<Watcher>& watchers) {
+std::vector<Watcher> track(const std::vector<Watcher>& watchers) {
   SYSTEMTIME now;
   GetLocalTime(&now);
   bool changed = false;
+  std::vector<Watcher> fresh;
   std::vector<bool> seen(g_rows.size());
   for (const Watcher& w : watchers) {
     const auto it = std::find_if(g_rows.begin(), g_rows.end(), [&w](const Row& r) { return same_watcher(r, w); });
     if (it == g_rows.end()) {
       g_rows.insert(g_rows.begin(), Row{w.source, w.pid, w.name, w.what, w.path, now});
       seen.insert(seen.begin(), true);
+      fresh.push_back(w);
       changed = true;
       continue;
     }
@@ -409,6 +407,7 @@ void track(const std::vector<Watcher>& watchers) {
   }
   if (g_window && (active_rows() > 0) != g_lit) show_lit(!g_lit);
   if (changed && g_window && IsWindowVisible(g_window)) fill();
+  return fresh;
 }
 
 void show_window(HINSTANCE instance) {

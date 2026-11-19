@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,10 @@ constexpr COLORREF kIdleColor = RGB(140, 140, 140);
 constexpr COLORREF kLitColor = RGB(226, 52, 40);
 
 enum class Source { kDuplication, kHiddenDesktop, kRemote, kInput, kScreenRead, kMagnifier, kThumbnail, kCapture };
+
+struct NoCase {
+  bool operator()(const std::wstring& a, const std::wstring& b) const { return _wcsicmp(a.c_str(), b.c_str()) < 0; }
+};
 
 struct Watcher {
   Source source = Source::kDuplication;
@@ -58,7 +63,7 @@ bool process_gone(DWORD pid);
 
 HICON make_light(COLORREF color, int size);
 
-void track(const std::vector<Watcher>& watchers);
+std::vector<Watcher> track(const std::vector<Watcher>& watchers);
 void show_window(HINSTANCE instance);
 
 int run_tray(HINSTANCE instance, bool show);
