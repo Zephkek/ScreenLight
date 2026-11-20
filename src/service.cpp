@@ -77,6 +77,15 @@ int fail(const std::wstring& text) {
 
 }  // namespace
 
+bool service_installed() {
+  SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+  if (!manager) return false;
+  SC_HANDLE service = OpenServiceW(manager, kServiceName, SERVICE_QUERY_STATUS);
+  if (service) CloseServiceHandle(service);
+  CloseServiceHandle(manager);
+  return service != nullptr;
+}
+
 int run_service() {
   SERVICE_TABLE_ENTRYW table[] = {{const_cast<wchar_t*>(kServiceName), service_main}, {nullptr, nullptr}};
   return StartServiceCtrlDispatcherW(table) ? 0 : 1;

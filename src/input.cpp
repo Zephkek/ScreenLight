@@ -219,6 +219,7 @@ bool find_sender(DWORD session, DWORD* pid, DWORD* tid) {
 }
 
 void start_input_watch(HWND notify) {
+  if (g_thread) return;
   ProcessIdToSessionId(GetCurrentProcessId(), &g_session);
   g_notify = notify;
   g_thread = CreateThread(nullptr, 0, hook_thread, nullptr, 0, &g_thread_id);

@@ -1,7 +1,48 @@
 #include <windows.h>
+#include <commctrl.h>
+
+#include "resource.h"
 
 1 ICON "screenlight.ico"
 1 RT_MANIFEST "screenlight.manifest"
+
+IDD_SETTINGS DIALOGEX 0, 0, 300, 322
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+EXSTYLE WS_EX_APPWINDOW
+CAPTION "Screen Light settings"
+FONT 8, "MS Shell Dlg 2"
+BEGIN
+  GROUPBOX        "General", -1, 7, 4, 286, 46
+  AUTOCHECKBOX    "&Start Screen Light with Windows", IDC_STARTUP, 15, 17, 270, 10
+  AUTOCHECKBOX    "Show a &notification when a program starts watching", IDC_NOTIFY, 15, 32, 270, 10
+
+  GROUPBOX        "Watch for", -1, 7, 54, 286, 82
+  AUTOCHECKBOX    "Screen &capture: screenshots, recorders and screen sharing", IDC_SCREEN, 15, 67, 270, 10
+  AUTOCHECKBOX    "Simulated &keyboard and mouse input", IDC_INPUT, 15, 81, 270, 10
+  AUTOCHECKBOX    "Programs &listening to the keyboard", IDC_KEYBOARD, 15, 95, 270, 10
+  AUTOCHECKBOX    "&Remote control, screen mirroring and hidden desktops", IDC_REMOTE, 15, 109, 270, 10
+  LTEXT           "", IDC_NEEDS, 15, 123, 270, 8
+
+  GROUPBOX        "Overlay", -1, 7, 140, 286, 50
+  LTEXT           "While a program is &watching, show:", -1, 15, 155, 122, 8
+  COMBOBOX        IDC_OVERLAY, 140, 153, 145, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+  LTEXT           "C&orner:", IDC_CORNER_LABEL, 15, 172, 122, 8
+  COMBOBOX        IDC_CORNER, 140, 170, 145, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+
+  GROUPBOX        "Ignored programs", -1, 7, 194, 286, 74
+  LTEXT           "These programs stay in the list but never turn the light red.", -1, 15, 206, 270, 8
+  LISTBOX         IDC_IGNORED, 15, 218, 208, 42, LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL | WS_BORDER | WS_TABSTOP
+  PUSHBUTTON      "&Add...", IDC_ADD, 229, 218, 56, 14
+  PUSHBUTTON      "Re&move", IDC_REMOVE, 229, 236, 56, 14
+
+  GROUPBOX        "Service", -1, 7, 272, 286, 30
+  LTEXT           "", IDC_SERVICE_TEXT, 15, 286, 186, 8
+  PUSHBUTTON      "", IDC_SERVICE, 205, 283, 80, 14
+
+  LTEXT           "", IDC_ABOUT, 9, 309, 170, 8, SS_NOPREFIX
+  DEFPUSHBUTTON   "OK", IDOK, 189, 306, 50, 14
+  PUSHBUTTON      "Cancel", IDCANCEL, 243, 306, 50, 14
+END
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION 0,1,0,0

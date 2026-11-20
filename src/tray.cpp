@@ -19,12 +19,10 @@ constexpr UINT kExit = 2;
 constexpr UINT kService = 3;
 constexpr UINT kStartup = 4;
 constexpr UINT kNotify = 5;
+constexpr UINT kSettings = 6;
 constexpr UINT_PTR kPollTimer = 1;
 constexpr ULONGLONG kNotifyAgainMs = 30 * 60 * 1000;
-constexpr wchar_t kSettingsKey[] = L"Software\\Screen Light";
-constexpr wchar_t kNotifyValue[] = L"Notifications";
-constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-constexpr wchar_t kRunValue[] = L"Screen Light";
+
 
 HINSTANCE g_instance;
 UINT g_taskbar_created;
@@ -61,20 +59,6 @@ std::wstring describe(const std::vector<Watcher>& watchers) {
   for (const Watcher& w : watchers) tip += L"\n" + w.name + L" " + w.what;
   if (tip.size() > 127) tip = tip.substr(0, 124) + L"...";
   return tip;
-}
-
-bool notifications_on() {
-  DWORD value = 1, size = sizeof value;
-  RegGetValueW(HKEY_CURRENT_USER, kSettingsKey, kNotifyValue, RRF_RT_REG_DWORD, nullptr, &value, &size);
-  return value != 0;
-}
-
-void show_notifications(bool on) {
-  HKEY key;
-  if (RegCreateKeyExW(HKEY_CURRENT_USER, kSettingsKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) return;
-  const DWORD value = on;
-  RegSetValueExW(key, kNotifyValue, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof value);
-  RegCloseKey(key);
 }
 
 std::wstring key_of(const Watcher& w) { return w.path.empty() ? w.name : w.path; }
@@ -115,15 +99,24 @@ void notify_new(HWND window, const std::vector<Watcher>& watchers, const std::ve
     if (quiet && !listed) news.push_back(w);
   }
   for (const Watcher& w : watchers) g_last_seen[key_of(w)] = now;
-  if (g_started && !news.empty() && notifications_on()) notify(window, news);
+  if (g_started && !news.empty() && settings().notifications) notify(window, news);
   g_started = true;
 }
 
 void refresh(HWND window) {
   const std::vector<Watcher> watchers = collect_watchers();
-  notify_new(window, watchers, track(watchers));
-  const bool lit = !watchers.empty();
-  std::wstring tip = describe(watchers);
+  const std::vector<Watcher> fresh = track(watchers);
+  std::vector<Watcher> active, news;
+  for (const Watcher& w : watchers) {
+    if (!ignored(w)) active.push_back(w);
+  }
+  for (const Watcher& w : fresh) {
+    if (!ignored(w)) news.push_back(w);
+  }
+  notify_new(window, active, news);
+  show_overlay(active);
+  const bool lit = !active.empty();
+  std::wstring tip = describe(active);
   if (lit == g_lit && tip == g_tip) return;
   g_lit = lit;
   g_tip = std::move(tip);
@@ -132,42 +125,6 @@ void refresh(HWND window) {
   data.hIcon = g_lit ? g_on : g_off;
   lstrcpynW(data.szTip, g_tip.c_str(), ARRAYSIZE(data.szTip));
   Shell_NotifyIconW(NIM_MODIFY, &data);
-}
-
-bool service_installed() {
-  SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
-  if (!manager) return false;
-  SC_HANDLE service = OpenServiceW(manager, kServiceName, SERVICE_QUERY_STATUS);
-  if (service) CloseServiceHandle(service);
-  CloseServiceHandle(manager);
-  return service != nullptr;
-}
-
-std::wstring startup_command() {
-  wchar_t self[MAX_PATH];
-  const DWORD length = GetModuleFileNameW(nullptr, self, ARRAYSIZE(self));
-  if (!length || length >= ARRAYSIZE(self)) return std::wstring();
-  return L"\"" + std::wstring(self, length) + L"\" --tray";
-}
-
-bool starts_with_windows() {
-  wchar_t value[MAX_PATH * 2];
-  DWORD size = sizeof value;
-  if (RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, RRF_RT_REG_SZ, nullptr, value, &size) != ERROR_SUCCESS) return false;
-  return _wcsicmp(value, startup_command().c_str()) == 0;
-}
-
-void start_with_windows(bool on) {
-  HKEY key;
-  if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) return;
-  const std::wstring command = startup_command();
-  if (on && !command.empty()) {
-    RegSetValueExW(key, kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
-                   DWORD((command.size() + 1) * sizeof(wchar_t)));
-  } else {
-    RegDeleteValueW(key, kRunValue);
-  }
-  RegCloseKey(key);
 }
 
 HBITMAP shield_bitmap() {
@@ -197,7 +154,7 @@ HBITMAP shield_bitmap() {
 void show_menu(HWND window, int x, int y) {
   const bool installed = service_installed();
   const bool startup = starts_with_windows();
-  const bool notifications = notifications_on();
+  const bool notifications = settings().notifications;
   HMENU menu = CreatePopupMenu();
   AppendMenuW(menu, MF_STRING, kOpen, L"Open Screen Light");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -205,6 +162,7 @@ void show_menu(HWND window, int x, int y) {
   AppendMenuW(menu, MF_STRING | (startup ? MF_CHECKED : MF_UNCHECKED), kStartup, L"Start with Windows");
   AppendMenuW(menu, MF_STRING | (installed ? MF_CHECKED : MF_UNCHECKED), kService, L"Detect screenshots and recorders");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  AppendMenuW(menu, MF_STRING, kSettings, L"Settings...");
   AppendMenuW(menu, MF_STRING, kExit, L"Exit");
   SetMenuDefaultItem(menu, kOpen, FALSE);
   HBITMAP shield = shield_bitmap();
@@ -220,9 +178,14 @@ void show_menu(HWND window, int x, int y) {
   PostMessageW(window, WM_NULL, 0, 0);
   DestroyMenu(menu);
   if (shield) DeleteObject(shield);
-  if (picked == kOpen) show_window(g_instance);
+  if (picked == kOpen) show_window(g_instance, window);
   if (picked == kStartup) start_with_windows(!startup);
-  if (picked == kNotify) show_notifications(!notifications);
+  if (picked == kNotify) {
+    Settings s = settings();
+    s.notifications = !notifications;
+    save_settings(s);
+  }
+  if (picked == kSettings) show_settings(g_instance, window);
   if (picked == kService) run_elevated(window, installed ? L"--uninstall" : L"--install");
   if (picked == kExit) DestroyWindow(window);
 }
@@ -241,7 +204,7 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
         case NIN_SELECT:
         case NIN_KEYSELECT:
         case NIN_BALLOONUSERCLICK:
-          show_window(g_instance);
+          show_window(g_instance, window);
           break;
       }
       return 0;
@@ -252,10 +215,22 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
       refresh(window);
       return 0;
     case kShowMessage:
-      show_window(g_instance);
+      show_window(g_instance, window);
+      return 0;
+    case kApplyMessage:
+      if (settings().watch_input) {
+        start_input_watch(window);
+      } else {
+        stop_input_watch();
+      }
+      refresh(window);
+      return 0;
+    case WM_DISPLAYCHANGE:
+      refresh(window);
       return 0;
     case WM_DESTROY: {
       KillTimer(window, kPollTimer);
+      show_overlay({});
       NOTIFYICONDATAW data = tray_data(window);
       Shell_NotifyIconW(NIM_DELETE, &data);
       PostQuitMessage(0);
@@ -299,12 +274,13 @@ int run_tray(HINSTANCE instance, bool show) {
   ChangeWindowMessageFilterEx(window, g_taskbar_created, MSGFLT_ALLOW, nullptr);
   ChangeWindowMessageFilterEx(window, kShowMessage, MSGFLT_ALLOW, nullptr);
   add_icon(window);
-  start_input_watch(window);
+  if (settings().watch_input) start_input_watch(window);
   refresh(window);
   SetTimer(window, kPollTimer, 1000, nullptr);
-  if (show) show_window(instance);
+  if (show) show_window(instance, window);
   MSG msg;
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    if (settings_message(&msg)) continue;
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }

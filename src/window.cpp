@@ -26,6 +26,7 @@ struct Row {
   SYSTEMTIME started{};
   SYSTEMTIME ended{};
   bool active = true;
+  bool ignored = false;
 };
 
 constexpr size_t kMaxRows = 200;
@@ -33,12 +34,17 @@ constexpr int kNowGroup = 1;
 constexpr int kEarlierGroup = 2;
 constexpr UINT kOpenLocation = 1;
 constexpr UINT kProperties = 2;
+constexpr UINT kIgnore = 3;
+constexpr UINT kClear = 4;
 
 std::vector<Row> g_rows;
 HWND g_window;
 HWND g_status;
 HWND g_hint;
 HWND g_list;
+HWND g_settings;
+HWND g_tray;
+HINSTANCE g_instance;
 HFONT g_font;
 HFONT g_title_font;
 HIMAGELIST g_images;
@@ -58,7 +64,9 @@ std::wstring clock_text(const SYSTEMTIME& time) {
   return text;
 }
 
-int active_rows() { return int(std::count_if(g_rows.begin(), g_rows.end(), [](const Row& r) { return r.active; })); }
+int active_rows() {
+  return int(std::count_if(g_rows.begin(), g_rows.end(), [](const Row& r) { return r.active && !r.ignored; }));
+}
 
 std::wstring status_text() {
   const int active = active_rows();
@@ -123,26 +131,50 @@ void show_properties(const std::wstring& path) {
   ShellExecuteExW(&info);
 }
 
+void fill();
+
+void clear_finished() {
+  g_rows.erase(std::remove_if(g_rows.begin(), g_rows.end(), [](const Row& r) { return !r.active; }), g_rows.end());
+  fill();
+}
+
 void row_menu(LPARAM where) {
   const int item = ListView_GetNextItem(g_list, -1, LVNI_SELECTED);
   const Row* row = row_at(item);
-  if (!row || row->path.empty()) return;
-  const std::wstring path = row->path;
+  const std::wstring path = row ? row->path : std::wstring();
+  const bool was_ignored = row && row->ignored;
   POINT at{GET_X_LPARAM(where), GET_Y_LPARAM(where)};
   if (where == -1) {
     RECT r{};
-    ListView_GetItemRect(g_list, item, &r, LVIR_LABEL);
+    if (item >= 0) ListView_GetItemRect(g_list, item, &r, LVIR_LABEL);
     at = {r.left, r.bottom};
     ClientToScreen(g_list, &at);
   }
   HMENU menu = CreatePopupMenu();
-  AppendMenuW(menu, MF_STRING, kOpenLocation, L"Open file location");
-  AppendMenuW(menu, MF_STRING, kProperties, L"Properties");
-  SetMenuDefaultItem(menu, kOpenLocation, FALSE);
+  if (!path.empty()) {
+    AppendMenuW(menu, MF_STRING, kOpenLocation, L"Open file location");
+    AppendMenuW(menu, MF_STRING, kProperties, L"Properties");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (was_ignored ? MF_CHECKED : MF_UNCHECKED), kIgnore, L"Ignore this program");
+    SetMenuDefaultItem(menu, kOpenLocation, FALSE);
+  }
+  if (std::any_of(g_rows.begin(), g_rows.end(), [](const Row& r) { return !r.active; })) {
+    if (!path.empty()) AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kClear, L"Clear earlier entries");
+  }
+  if (GetMenuItemCount(menu) == 0) {
+    DestroyMenu(menu);
+    return;
+  }
   const UINT picked = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, at.x, at.y, 0, g_window, nullptr);
   DestroyMenu(menu);
   if (picked == kOpenLocation) open_location(path);
   if (picked == kProperties) show_properties(path);
+  if (picked == kIgnore) {
+    ignore_program(path, !was_ignored);
+    if (g_tray) PostMessageW(g_tray, kApplyMessage, 0, 0);
+  }
+  if (picked == kClear) clear_finished();
 }
 
 void info_tip(NMLVGETINFOTIPW* tip) {
@@ -166,10 +198,11 @@ void fit_columns() {
 void layout() {
   RECT client;
   GetClientRect(g_window, &client);
-  const int margin = px(11), title = px(24);
+  const int margin = px(11), title = px(24), link = px(60);
   const int width = client.right - 2 * margin;
+  MoveWindow(g_settings, client.right - margin - link, margin + px(4), link, px(18), TRUE);
   const int hint = (GetWindowLongW(g_hint, GWL_STYLE) & WS_VISIBLE) ? int(SendMessageW(g_hint, LM_GETIDEALHEIGHT, width, 0)) : 0;
-  MoveWindow(g_status, margin, margin, width, title, TRUE);
+  MoveWindow(g_status, margin, margin, width - link, title, TRUE);
   MoveWindow(g_hint, margin, margin + title, width, hint, TRUE);
   const int top = margin + title + hint + px(7);
   MoveWindow(g_list, margin, top, client.right - 2 * margin, std::max<int>(0, client.bottom - top - margin), TRUE);
@@ -227,6 +260,10 @@ LRESULT notify(HWND window, NMHDR* header) {
     run_elevated(window, L"--install");
     return 0;
   }
+  if (header->hwndFrom == g_settings && (header->code == NM_CLICK || header->code == NM_RETURN)) {
+    show_settings(g_instance, g_tray);
+    return 0;
+  }
   if (header->hwndFrom != g_list) return 0;
   switch (header->code) {
     case LVN_KEYDOWN:
@@ -235,6 +272,15 @@ LRESULT notify(HWND window, NMHDR* header) {
     case LVN_GETINFOTIPW:
       info_tip(reinterpret_cast<NMLVGETINFOTIPW*>(header));
       return 0;
+    case NM_CUSTOMDRAW: {
+      auto* draw = reinterpret_cast<NMLVCUSTOMDRAW*>(header);
+      if (draw->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
+      if (draw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+        const Row* row = row_at(int(draw->nmcd.dwItemSpec));
+        if (row && row->ignored) draw->clrText = GetSysColor(COLOR_GRAYTEXT);
+      }
+      return CDRF_DODEFAULT;
+    }
     case NM_DBLCLK:
       if (const Row* row = row_at(reinterpret_cast<NMITEMACTIVATE*>(header)->iItem); row && !row->path.empty()) {
         open_location(row->path);
@@ -341,11 +387,14 @@ void create(HINSTANCE instance) {
   g_hint = CreateWindowExW(0, WC_LINK,
                            L"<a>Install the service</a> to also see screenshots, screen recorders and the magnifier.",
                            WS_CHILD | WS_TABSTOP, 0, 0, 0, 0, g_window, nullptr, instance, nullptr);
+  g_settings = CreateWindowExW(0, WC_LINK, L"<a>Settings</a>", WS_CHILD | WS_VISIBLE | WS_TABSTOP | LWS_RIGHT, 0, 0, 0, 0,
+                               g_window, nullptr, instance, nullptr);
   g_list = CreateWindowExW(0, WC_LISTVIEWW, L"",
                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER,
                            0, 0, 0, 0, g_window, nullptr, instance, nullptr);
   SendMessageW(g_status, WM_SETFONT, reinterpret_cast<WPARAM>(g_title_font), FALSE);
   SendMessageW(g_hint, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), FALSE);
+  SendMessageW(g_settings, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), FALSE);
   SendMessageW(g_list, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), FALSE);
   SetWindowTheme(g_list, L"Explorer", nullptr);
   ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_INFOTIP);
@@ -382,7 +431,7 @@ std::vector<Watcher> track(const std::vector<Watcher>& watchers) {
   for (const Watcher& w : watchers) {
     const auto it = std::find_if(g_rows.begin(), g_rows.end(), [&w](const Row& r) { return same_watcher(r, w); });
     if (it == g_rows.end()) {
-      g_rows.insert(g_rows.begin(), Row{w.source, w.pid, w.name, w.what, w.path, now});
+      g_rows.insert(g_rows.begin(), Row{w.source, w.pid, w.name, w.what, w.path, now, {}, true, ignored(w)});
       seen.insert(seen.begin(), true);
       fresh.push_back(w);
       changed = true;
@@ -400,6 +449,13 @@ std::vector<Watcher> track(const std::vector<Watcher>& watchers) {
     g_rows[i].ended = now;
     changed = true;
   }
+  for (Row& row : g_rows) {
+    const bool skip = ignored_path(row.path);
+    if (row.ignored != skip) {
+      row.ignored = skip;
+      changed = true;
+    }
+  }
   if (g_rows.size() > kMaxRows) g_rows.resize(kMaxRows);
   if (service_running() != g_service) {
     g_service = !g_service;
@@ -410,7 +466,9 @@ std::vector<Watcher> track(const std::vector<Watcher>& watchers) {
   return fresh;
 }
 
-void show_window(HINSTANCE instance) {
+void show_window(HINSTANCE instance, HWND tray) {
+  g_instance = instance;
+  g_tray = tray;
   if (!g_window) create(instance);
   if (!g_window) return;
   show_lit(active_rows() > 0);
