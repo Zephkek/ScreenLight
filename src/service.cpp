@@ -53,7 +53,7 @@ void WINAPI service_main(DWORD, LPWSTR*) {
 
 std::wstring install_dir() {
   wchar_t path[MAX_PATH];
-  const DWORD length = ExpandEnvironmentStringsW(L"%ProgramFiles%\\ScreenLight", path, ARRAYSIZE(path));
+  const DWORD length = ExpandEnvironmentStringsW(L"%ProgramFiles%\\Screen Light", path, ARRAYSIZE(path));
   return length && length <= ARRAYSIZE(path) ? std::wstring(path) : std::wstring();
 }
 
@@ -138,8 +138,11 @@ int uninstall_service() {
   }
   CloseServiceHandle(manager);
   const std::wstring dir = install_dir();
-  if (!dir.empty()) {
-    const std::wstring exe = dir + L"\\ScreenLight.exe";
+  wchar_t self[MAX_PATH];
+  const DWORD length = GetModuleFileNameW(nullptr, self, ARRAYSIZE(self));
+  const std::wstring exe = dir + L"\\ScreenLight.exe";
+  const bool installed = GetFileAttributesW((dir + L"\\unins000.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
+  if (!dir.empty() && !installed && length && length < ARRAYSIZE(self) && _wcsicmp(self, exe.c_str()) != 0) {
     if (!DeleteFileW(exe.c_str())) MoveFileExW(exe.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
     RemoveDirectoryW(dir.c_str());
   }

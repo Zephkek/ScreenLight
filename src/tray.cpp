@@ -225,6 +225,9 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
       }
       refresh(window);
       return 0;
+    case WM_ENDSESSION:
+      if (wparam) DestroyWindow(window);
+      return 0;
     case WM_DISPLAYCHANGE:
       refresh(window);
       return 0;
@@ -260,6 +263,7 @@ int run_tray(HINSTANCE instance, bool show) {
   g_instance = instance;
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
   g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
+  RegisterApplicationRestart(L"--tray", RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT);
   const int size = GetSystemMetrics(SM_CXSMICON);
   g_off = make_light(false, size);
   g_on = make_light(true, size);
