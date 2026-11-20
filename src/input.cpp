@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "screenlight.h"
@@ -62,6 +63,7 @@ constexpr ULONG kWrUserRequest = 13;
 constexpr LONG kInfoLengthMismatch = LONG(0xC0000004);
 constexpr ULONGLONG kScanEveryMs = 200;
 constexpr ULONGLONG kForgetAfterMs = 3000;
+constexpr size_t kKnownThreads = 8;
 
 using QuerySystemFn = LONG(NTAPI*)(ULONG, PVOID, ULONG, PULONG);
 using QueryThreadFn = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
@@ -73,8 +75,7 @@ HWND g_notify;
 HANDLE g_thread;
 DWORD g_thread_id;
 DWORD g_session;
-DWORD g_last_tid;
-DWORD g_last_pid;
+std::vector<std::pair<DWORD, DWORD>> g_known;
 ULONGLONG g_last_scan;
 std::vector<uint8_t> g_snapshot;
 std::mutex g_lock;
@@ -146,8 +147,10 @@ void record(DWORD pid, const std::wstring& name, const std::wstring& path, bool 
 
 void injected(bool keys) {
   const ULONGLONG now = GetTickCount64();
-  if (g_last_tid && in_send_input(g_last_tid)) {
-    record(g_last_pid, std::wstring(), std::wstring(), keys, now);
+  for (size_t i = 0; i < g_known.size(); ++i) {
+    if (!in_send_input(g_known[i].first)) continue;
+    std::rotate(g_known.begin(), g_known.begin() + i, g_known.begin() + i + 1);
+    record(g_known[0].second, std::wstring(), std::wstring(), keys, now);
     return;
   }
   if (now - g_last_scan < kScanEveryMs) return;
@@ -155,8 +158,8 @@ void injected(bool keys) {
   DWORD pid = 0, tid = 0;
   std::wstring name, path;
   if (find_sender(g_session, &pid, &tid)) {
-    g_last_pid = pid;
-    g_last_tid = tid;
+    g_known.insert(g_known.begin(), {tid, pid});
+    if (g_known.size() > kKnownThreads) g_known.pop_back();
   } else {
     pid = service_sender(&name, &path);
   }
@@ -174,6 +177,7 @@ LRESULT CALLBACK key_hook(int code, WPARAM wparam, LPARAM lparam) {
 }
 
 DWORD WINAPI hook_thread(void*) {
+  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
   HINSTANCE self = GetModuleHandleW(nullptr);
   HHOOK mouse = SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, self, 0);
   HHOOK keys = SetWindowsHookExW(WH_KEYBOARD_LL, key_hook, self, 0);

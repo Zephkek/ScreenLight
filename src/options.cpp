@@ -213,8 +213,8 @@ void show_settings(HINSTANCE instance, HWND tray) {
     return;
   }
   if (!g_small) {
-    g_small = make_light(kIdleColor, GetSystemMetrics(SM_CXSMICON));
-    g_big = make_light(kIdleColor, GetSystemMetrics(SM_CXICON));
+    g_small = make_light(false, GetSystemMetrics(SM_CXSMICON));
+    g_big = make_light(false, GetSystemMetrics(SM_CXICON));
   }
   if (HWND dialog = CreateDialogParamW(instance, MAKEINTRESOURCEW(IDD_SETTINGS), nullptr, options_proc, 0)) {
     ShowWindow(dialog, SW_SHOW);

@@ -89,7 +89,7 @@ std::wstring process_name(DWORD pid, const char* fallback = nullptr);
 bool process_gone(DWORD pid);
 std::vector<char> file_bytes(const std::wstring& path);
 
-HICON make_light(COLORREF color, int size);
+HICON make_light(bool lit, int size);
 void show_overlay(const std::vector<Watcher>& active);
 
 std::vector<Watcher> track(const std::vector<Watcher>& watchers);

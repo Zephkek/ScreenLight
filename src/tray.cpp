@@ -261,9 +261,9 @@ int run_tray(HINSTANCE instance, bool show) {
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
   g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
   const int size = GetSystemMetrics(SM_CXSMICON);
-  g_off = make_light(kIdleColor, size);
-  g_on = make_light(kLitColor, size);
-  g_balloon = make_light(kLitColor, GetSystemMetrics(SM_CXICON));
+  g_off = make_light(false, size);
+  g_on = make_light(true, size);
+  g_balloon = make_light(true, GetSystemMetrics(SM_CXICON));
   WNDCLASSW wc{};
   wc.lpfnWndProc = tray_proc;
   wc.hInstance = instance;

@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <uxtheme.h>
 #include <vsstyle.h>
 #include <vssym32.h>
@@ -58,6 +59,52 @@ int g_dpi = 96;
 
 int px(int value) { return MulDiv(value, g_dpi, 96); }
 
+int system_dpi() {
+  HDC screen = GetDC(nullptr);
+  const int dpi = GetDeviceCaps(screen, LOGPIXELSX);
+  ReleaseDC(nullptr, screen);
+  return dpi;
+}
+
+int window_dpi(HWND window) {
+  using DpiFn = UINT(WINAPI*)(HWND);
+  static const auto get = reinterpret_cast<DpiFn>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"));
+  const UINT dpi = get && window ? get(window) : 0;
+  return dpi ? int(dpi) : system_dpi();
+}
+
+int metric(int index) {
+  using MetricFn = int(WINAPI*)(int, UINT);
+  static const auto get = reinterpret_cast<MetricFn>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetSystemMetricsForDpi"));
+  return get ? get(index, UINT(g_dpi)) : MulDiv(GetSystemMetrics(index), g_dpi, system_dpi());
+}
+
+void make_fonts() {
+  using InfoFn = BOOL(WINAPI*)(UINT, UINT, void*, UINT, UINT);
+  static const auto get = reinterpret_cast<InfoFn>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "SystemParametersInfoForDpi"));
+  NONCLIENTMETRICSW metrics{};
+  metrics.cbSize = sizeof metrics;
+  if (!get || !get(SPI_GETNONCLIENTMETRICS, sizeof metrics, &metrics, 0, UINT(g_dpi))) {
+    SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof metrics, &metrics, 0);
+    metrics.lfMessageFont.lfHeight = MulDiv(metrics.lfMessageFont.lfHeight, g_dpi, system_dpi());
+  }
+  if (g_font) DeleteObject(g_font);
+  if (g_title_font) DeleteObject(g_title_font);
+  g_font = CreateFontIndirectW(&metrics.lfMessageFont);
+  LOGFONTW title = metrics.lfMessageFont;
+  title.lfHeight = MulDiv(title.lfHeight, 12, 9);
+  g_title_font = CreateFontIndirectW(&title);
+}
+
+void make_icons() {
+  for (int lit = 0; lit < 2; ++lit) {
+    for (int big = 0; big < 2; ++big) {
+      if (g_icons[lit][big]) DestroyIcon(g_icons[lit][big]);
+      g_icons[lit][big] = make_light(lit != 0, metric(big ? SM_CXICON : SM_CXSMICON));
+    }
+  }
+}
+
 std::wstring clock_text(const SYSTEMTIME& time) {
   wchar_t text[64];
   if (!GetTimeFormatW(LOCALE_USER_DEFAULT, 0, &time, nullptr, text, ARRAYSIZE(text))) return std::wstring();
@@ -99,13 +146,28 @@ int icon_for(const std::wstring& path) {
   if (path.empty()) return 0;
   if (const auto it = g_image_of.find(path); it != g_image_of.end()) return it->second;
   int index = 0;
-  HICON small = nullptr;
-  if (ExtractIconExW(path.c_str(), 0, nullptr, &small, 1) == 1 && small) {
-    index = std::max(0, ImageList_AddIcon(g_images, small));
-    DestroyIcon(small);
+  HICON icon = nullptr;
+  const int size = metric(SM_CXSMICON);
+  if (SHDefExtractIconW(path.c_str(), 0, 0, &icon, nullptr, MAKELONG(size, size)) == S_OK && icon) {
+    index = std::max(0, ImageList_AddIcon(g_images, icon));
+    DestroyIcon(icon);
   }
   g_image_of.emplace(path, index);
   return index;
+}
+
+void make_images() {
+  const int size = metric(SM_CXSMICON);
+  HIMAGELIST fresh = ImageList_Create(size, size, ILC_COLOR32 | ILC_MASK, 8, 8);
+  ImageList_AddIcon(fresh, static_cast<HICON>(LoadImageW(nullptr, IDI_APPLICATION, IMAGE_ICON, size, size, LR_SHARED)));
+  if (HIMAGELIST old = ListView_SetImageList(g_list, fresh, LVSIL_SMALL)) ImageList_Destroy(old);
+  g_images = fresh;
+  g_image_of.clear();
+}
+
+void set_fonts() {
+  SendMessageW(g_status, WM_SETFONT, reinterpret_cast<WPARAM>(g_title_font), TRUE);
+  for (HWND control : {g_hint, g_settings, g_list}) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
 }
 
 const Row* row_at(int item) {
@@ -305,6 +367,22 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_GETMINMAXINFO:
       reinterpret_cast<MINMAXINFO*>(lparam)->ptMinTrackSize = {px(420), px(240)};
       return 0;
+    case WM_DPICHANGED: {
+      const int old = g_dpi;
+      g_dpi = HIWORD(wparam);
+      make_fonts();
+      set_fonts();
+      make_icons();
+      show_lit(g_lit);
+      make_images();
+      for (int column : {0, 2, 3}) {
+        ListView_SetColumnWidth(g_list, column, MulDiv(ListView_GetColumnWidth(g_list, column), g_dpi, old));
+      }
+      const RECT* r = reinterpret_cast<const RECT*>(lparam);
+      SetWindowPos(window, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
+      fill();
+      return 0;
+    }
     case WM_THEMECHANGED:
       load_title_color();
       InvalidateRect(g_status, nullptr, TRUE);
@@ -351,29 +429,15 @@ int time_column_width() {
 }
 
 void create(HINSTANCE instance) {
-  HDC screen = GetDC(nullptr);
-  g_dpi = GetDeviceCaps(screen, LOGPIXELSX);
-  ReleaseDC(nullptr, screen);
-  NONCLIENTMETRICSW metrics{};
-  metrics.cbSize = sizeof metrics;
-  SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof metrics, &metrics, 0);
-  g_font = CreateFontIndirectW(&metrics.lfMessageFont);
-  LOGFONTW title = metrics.lfMessageFont;
-  title.lfHeight = MulDiv(title.lfHeight, 12, 9);
-  g_title_font = CreateFontIndirectW(&title);
+  g_dpi = system_dpi();
   INITCOMMONCONTROLSEX controls{sizeof controls, ICC_LISTVIEW_CLASSES | ICC_LINK_CLASS};
   InitCommonControlsEx(&controls);
-  for (int lit = 0; lit < 2; ++lit) {
-    g_icons[lit][0] = make_light(lit ? kLitColor : kIdleColor, GetSystemMetrics(SM_CXSMICON));
-    g_icons[lit][1] = make_light(lit ? kLitColor : kIdleColor, GetSystemMetrics(SM_CXICON));
-  }
 
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof wc;
   wc.lpfnWndProc = window_proc;
   wc.hInstance = instance;
-  wc.hIcon = g_icons[0][1];
-  wc.hIconSm = g_icons[0][0];
+  wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
   wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
   wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
   wc.lpszClassName = L"ScreenLightWindow";
@@ -381,6 +445,9 @@ void create(HINSTANCE instance) {
   g_window = CreateWindowExW(0, wc.lpszClassName, L"Screen Light", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
                              px(660), px(380), nullptr, nullptr, instance, nullptr);
   if (!g_window) return;
+  g_dpi = window_dpi(g_window);
+  make_fonts();
+  make_icons();
   load_title_color();
   g_status = CreateWindowExW(0, WC_STATICW, L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, g_window,
                              nullptr, instance, nullptr);
@@ -392,16 +459,10 @@ void create(HINSTANCE instance) {
   g_list = CreateWindowExW(0, WC_LISTVIEWW, L"",
                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER,
                            0, 0, 0, 0, g_window, nullptr, instance, nullptr);
-  SendMessageW(g_status, WM_SETFONT, reinterpret_cast<WPARAM>(g_title_font), FALSE);
-  SendMessageW(g_hint, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), FALSE);
-  SendMessageW(g_settings, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), FALSE);
-  SendMessageW(g_list, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), FALSE);
+  set_fonts();
   SetWindowTheme(g_list, L"Explorer", nullptr);
   ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_INFOTIP);
-  const int cx = GetSystemMetrics(SM_CXSMICON), cy = GetSystemMetrics(SM_CYSMICON);
-  g_images = ImageList_Create(cx, cy, ILC_COLOR32 | ILC_MASK, 8, 8);
-  ImageList_AddIcon(g_images, static_cast<HICON>(LoadImageW(nullptr, IDI_APPLICATION, IMAGE_ICON, cx, cy, LR_SHARED)));
-  ListView_SetImageList(g_list, g_images, LVSIL_SMALL);
+  make_images();
   const int time = time_column_width();
   const struct {
     const wchar_t* title;
