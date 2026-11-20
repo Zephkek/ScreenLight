@@ -44,7 +44,7 @@ std::wstring answer(HANDLE pipe, const std::wstring& request) {
   }
   if (request != L"list") return reply;
   for (const Watcher& w : tracked(session)) {
-    reply += L"\n" + std::to_wstring(int(w.source)) + L"\t" + std::to_wstring(w.pid) + L"\t" + w.name + L"\t" + w.what + L"\t" + w.path;
+    reply += L"\n" + std::to_wstring(int(w.source)) + L"\t" + std::to_wstring(w.pid) + L"\t" + w.name + L"\t" + w.what + L"\t" + w.path + L"\t" + std::to_wstring(w.window);
   }
   return reply;
 }
@@ -201,8 +201,9 @@ std::vector<Watcher> service_watchers() {
   }
   for (size_t i = 1; i < lines.size(); ++i) {
     const std::vector<std::wstring> fields = split(lines[i], L'\t');
-    if (fields.size() != 5) continue;
-    found.push_back({Source(_wtoi(fields[0].c_str())), DWORD(_wtoi(fields[1].c_str())), fields[2], fields[3], fields[4]});
+    if (fields.size() != 6) continue;
+    found.push_back({Source(_wtoi(fields[0].c_str())), DWORD(_wtoi(fields[1].c_str())), fields[2], fields[3], fields[4],
+                     ULONG(wcstoul(fields[5].c_str(), nullptr, 10))});
   }
   return found;
 }

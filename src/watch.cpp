@@ -1,10 +1,22 @@
+#include <windows.h>
+
+#include <cwchar>
 #include <iterator>
+#include <string>
 #include <vector>
 
 #include "screenlight.h"
 
 namespace screenlight {
 namespace {
+
+bool own_window(const Watcher& w) {
+  DWORD owner = 0;
+  if (!w.window || !GetWindowThreadProcessId(reinterpret_cast<HWND>(ULONG_PTR(w.window)), &owner) || !owner) return false;
+  if (owner == w.pid) return true;
+  const std::wstring path = process_path(owner);
+  return !path.empty() && !w.path.empty() && _wcsicmp(path.c_str(), w.path.c_str()) == 0;
+}
 
 void append(std::vector<Watcher>* all, std::vector<Watcher> more) {
   all->insert(all->end(), std::make_move_iterator(more.begin()), std::make_move_iterator(more.end()));
@@ -22,7 +34,7 @@ std::vector<Watcher> collect_watchers() {
   }
   if (s.watch_input) append(&all, input_senders());
   for (Watcher& w : service_watchers()) {
-    if (watched(w)) all.push_back(std::move(w));
+    if (watched(w) && !own_window(w)) all.push_back(std::move(w));
   }
   return all;
 }

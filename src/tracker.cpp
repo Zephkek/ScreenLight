@@ -17,6 +17,7 @@ struct Tracked {
   std::wstring name;
   std::wstring what;
   std::wstring path;
+  ULONG window = 0;
   ULONGLONG until = 0;
   int open = 0;
 };
@@ -38,10 +39,11 @@ Tracked& entry(Source source, DWORD pid, const std::wstring& what) {
 
 }  // namespace
 
-void track_seen(Source source, DWORD pid, const std::wstring& what, ULONGLONG ttl_ms) {
+void track_seen(Source source, DWORD pid, const std::wstring& what, ULONGLONG ttl_ms, ULONG window) {
   std::lock_guard<std::mutex> hold(g_lock);
   Tracked& t = entry(source, pid, what);
   t.until = std::max(t.until, GetTickCount64() + ttl_ms);
+  if (window) t.window = window;
 }
 
 void track_open(Source source, DWORD pid, const std::wstring& what) {
@@ -74,7 +76,7 @@ std::vector<Watcher> tracked(DWORD session) {
                   g_tracked.end());
   std::vector<Watcher> found;
   for (const Tracked& t : g_tracked) {
-    if (t.session == session) found.push_back({t.source, t.pid, t.name, t.what, t.path});
+    if (t.session == session) found.push_back({t.source, t.pid, t.name, t.what, t.path, t.window});
   }
   return found;
 }

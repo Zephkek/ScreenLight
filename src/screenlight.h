@@ -27,6 +27,7 @@ struct Watcher {
   std::wstring name;
   std::wstring what;
   std::wstring path;
+  ULONG window = 0;
 };
 
 enum { kOverlayOff, kOverlayBadge, kOverlayBorder };
@@ -57,6 +58,8 @@ bool settings_message(MSG* msg);
 std::vector<Watcher> duplicating_processes();
 std::vector<Watcher> hidden_desktop_processes();
 std::vector<Watcher> remote_viewers();
+void remote_changed();
+void displays_changed();
 std::vector<Watcher> input_senders();
 std::vector<Watcher> collect_watchers();
 
@@ -64,7 +67,7 @@ void start_input_watch(HWND notify);
 void stop_input_watch();
 bool find_sender(DWORD session, DWORD* pid, DWORD* tid);
 
-void track_seen(Source source, DWORD pid, const std::wstring& what, ULONGLONG ttl_ms);
+void track_seen(Source source, DWORD pid, const std::wstring& what, ULONGLONG ttl_ms, ULONG window = 0);
 void track_open(Source source, DWORD pid, const std::wstring& what);
 void track_close(Source source, DWORD pid);
 bool tracking(Source source, DWORD pid);

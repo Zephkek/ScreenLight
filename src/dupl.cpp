@@ -77,22 +77,25 @@ const Kmt& kmt() {
   return fns;
 }
 
-void read_snapshot(const Kmt& k, UINT adapter, std::vector<Watcher>* out) {
+std::vector<UINT> g_adapters;
+bool g_adapters_open;
+
+bool read_snapshot(const Kmt& k, UINT adapter, std::vector<Watcher>* out) {
   std::vector<uint8_t> buf(sizeof(DuplSnapshot));
   auto* snap = reinterpret_cast<DuplSnapshot*>(buf.data());
   snap->size = offsetof(DuplSnapshot, entries);
   Escape esc{adapter, 0, kSnapshotEscape, 0, buf.data(), snap->size, 0};
-  if (k.escape(&esc) < 0) return;
+  if (k.escape(&esc) < 0) return false;
   const UINT need = snap->size;
-  if (need < offsetof(DuplSnapshot, entries) || need > (1u << 20)) return;
+  if (need < offsetof(DuplSnapshot, entries) || need > (1u << 20)) return true;
   buf.assign(std::max<size_t>(need, sizeof(DuplSnapshot)), 0);
   snap = reinterpret_cast<DuplSnapshot*>(buf.data());
   snap->size = need;
   esc.data = buf.data();
   esc.size = need;
-  if (k.escape(&esc) < 0) return;
+  if (k.escape(&esc) < 0) return false;
   const uint64_t count = uint64_t(snap->sources) * snap->contexts;
-  if (offsetof(DuplSnapshot, entries) + count * sizeof(DuplContext) > need) return;
+  if (offsetof(DuplSnapshot, entries) + count * sizeof(DuplContext) > need) return true;
   for (uint64_t i = 0; i < count; ++i) {
     const DuplContext& entry = snap->entries[i];
     if (entry.status != 1) continue;
@@ -102,14 +105,20 @@ void read_snapshot(const Kmt& k, UINT adapter, std::vector<Watcher>* out) {
     memcpy(raw, entry.name, sizeof entry.name);
     out->push_back({Source::kDuplication, pid, process_name(pid, raw), L"copies the screen", process_path(pid)});
   }
+  return true;
 }
 
-}  // namespace
+void close_adapters(const Kmt& k) {
+  for (UINT adapter : g_adapters) {
+    const CloseAdapter close{adapter};
+    k.close(&close);
+  }
+  g_adapters.clear();
+  g_adapters_open = false;
+}
 
-std::vector<Watcher> duplicating_processes() {
-  std::vector<Watcher> found;
-  const Kmt& k = kmt();
-  if (!k.open || !k.close || !k.escape) return found;
+void open_adapters(const Kmt& k) {
+  std::vector<LUID> seen;
   DISPLAY_DEVICEW device{};
   device.cb = sizeof device;
   for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &device, 0); ++i, device.cb = sizeof device) {
@@ -118,11 +127,37 @@ std::vector<Watcher> duplicating_processes() {
     OpenAdapter open{};
     lstrcpynW(open.device, device.DeviceName, ARRAYSIZE(open.device));
     if (k.open(&open) < 0) continue;
-    read_snapshot(k, open.adapter, &found);
-    const CloseAdapter close{open.adapter};
-    k.close(&close);
+    const bool known = std::any_of(seen.begin(), seen.end(), [&](const LUID& l) {
+      return l.LowPart == open.luid.LowPart && l.HighPart == open.luid.HighPart;
+    });
+    if (known) {
+      const CloseAdapter close{open.adapter};
+      k.close(&close);
+      continue;
+    }
+    seen.push_back(open.luid);
+    g_adapters.push_back(open.adapter);
   }
+  g_adapters_open = true;
+}
+
+}  // namespace
+
+std::vector<Watcher> duplicating_processes() {
+  std::vector<Watcher> found;
+  const Kmt& k = kmt();
+  if (!k.open || !k.close || !k.escape) return found;
+  if (!g_adapters_open) open_adapters(k);
+  bool lost = false;
+  for (UINT adapter : g_adapters) lost |= !read_snapshot(k, adapter, &found);
+  if (lost) close_adapters(k);
   return found;
+}
+
+void displays_changed() {
+  const Kmt& k = kmt();
+  if (k.close) close_adapters(k);
+  remote_changed();
 }
 
 }  // namespace screenlight

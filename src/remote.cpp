@@ -22,11 +22,14 @@ std::wstring session_user(DWORD session) {
   return name;
 }
 
-}  // namespace
 
-std::vector<Watcher> remote_viewers() {
+std::vector<Watcher> g_slow;
+ULONGLONG g_slow_at;
+bool g_slow_stale = true;
+constexpr ULONGLONG kSlowEveryMs = 30000;
+
+std::vector<Watcher> slow_viewers() {
   std::vector<Watcher> found;
-  if (GetSystemMetrics(kRemoteControl)) found.push_back({Source::kRemote, 0, L"Someone", L"controls this session remotely", {}});
   WTS_SESSION_INFOW* sessions = nullptr;
   DWORD count = 0;
   if (WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &sessions, &count)) {
@@ -44,6 +47,22 @@ std::vector<Watcher> remote_viewers() {
   for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &device, 0); ++i, device.cb = sizeof device) {
     if ((device.StateFlags & mirror) == mirror) found.push_back({Source::kRemote, 0, device.DeviceString, L"mirrors the screen", {}});
   }
+  return found;
+}
+
+}  // namespace
+
+void remote_changed() { g_slow_stale = true; }
+
+std::vector<Watcher> remote_viewers() {
+  const ULONGLONG now = GetTickCount64();
+  if (g_slow_stale || now - g_slow_at > kSlowEveryMs) {
+    g_slow = slow_viewers();
+    g_slow_at = now;
+    g_slow_stale = false;
+  }
+  std::vector<Watcher> found = g_slow;
+  if (GetSystemMetrics(kRemoteControl)) found.push_back({Source::kRemote, 0, L"Someone", L"controls this session remotely", {}});
   return found;
 }
 

@@ -56,6 +56,7 @@ constexpr ULONGLONG kReadShowsForMs = 5000;
 std::atomic<DWORD> g_calibrating{0};
 std::atomic<ULONGLONG> g_calibrate_until{0};
 std::atomic<ULONG> g_read_code{0};
+std::atomic<bool> g_surface_names_window{false};
 std::vector<BYTE> g_properties;
 TRACEHANDLE g_session;
 TRACEHANDLE g_consumer = INVALID_PROCESSTRACE_HANDLE;
@@ -102,6 +103,17 @@ bool own_copy(DWORD pid) {
   return !self.empty() && !path.empty() && file_bytes(path) == self;
 }
 
+bool windows_component(DWORD pid) {
+  wchar_t windows[MAX_PATH];
+  const UINT length = GetWindowsDirectoryW(windows, ARRAYSIZE(windows));
+  if (!length || length >= ARRAYSIZE(windows)) return false;
+  const std::wstring folder = std::wstring(windows, length) + L"\\";
+  const std::wstring path = process_path(pid);
+  return path.size() > folder.size() && _wcsnicmp(path.c_str(), folder.c_str(), folder.size()) == 0;
+}
+
+bool trusted_listener(DWORD pid) { return windows_component(pid) || own_copy(pid); }
+
 void keyboard_listener(PEVENT_RECORD record) {
   ULONG pid = record->EventHeader.ProcessId;
   switch (record->EventHeader.EventDescriptor.Id) {
@@ -109,7 +121,7 @@ void keyboard_listener(PEVENT_RECORD record) {
       ULONG type = 0, result = 0;
       if (!uint_property(record, L"FilterType", &type) || !uint_property(record, L"ReturnValue", &result) || !result) return;
       if (type != WH_KEYBOARD && type != WH_KEYBOARD_LL && type != WH_JOURNALRECORD) return;
-      if (!own_copy(pid)) track_open(Source::kKeyboard, pid, kListens);
+      if (!trusted_listener(pid)) track_open(Source::kKeyboard, pid, kListens);
       return;
     }
     case kRawInputEvent: {
@@ -122,7 +134,7 @@ void keyboard_listener(PEVENT_RECORD record) {
       if (page != kKeyboardPage || (usage != kKeyboardUsage && usage != kKeypadUsage)) return;
       if (flags & RIDEV_REMOVE) {
         track_close(Source::kKeyboard, pid);
-      } else if ((flags & (RIDEV_INPUTSINK | RIDEV_EXINPUTSINK)) && !own_copy(pid)) {
+      } else if ((flags & (RIDEV_INPUTSINK | RIDEV_EXINPUTSINK)) && !trusted_listener(pid)) {
         track_open(Source::kKeyboard, pid, kListens);
       }
       return;
@@ -130,7 +142,7 @@ void keyboard_listener(PEVENT_RECORD record) {
     case kKeyStateEvent: {
       ULONG calls = 0;
       if (!uint_property(record, L"PID", &pid) || !uint_property(record, L"BackgroundCallCount", &calls)) return;
-      if (calls >= kBackgroundPolls && !own_copy(pid)) track_seen(Source::kKeyboard, pid, kListens, kPollShowsForMs);
+      if (calls >= kBackgroundPolls && !trusted_listener(pid)) track_seen(Source::kKeyboard, pid, kListens, kPollShowsForMs);
       return;
     }
   }
@@ -160,18 +172,23 @@ DwmCall dwm_call(PEVENT_RECORD record) {
 }
 
 void dwm_api(PEVENT_RECORD record) {
-  if (record->EventHeader.EventDescriptor.Opcode == kStopOpcode) return;
+  const bool stop = record->EventHeader.EventDescriptor.Opcode == kStopOpcode;
   const DWORD pid = record->EventHeader.ProcessId;
   switch (dwm_call(record)) {
     case DwmCall::kRegisterThumbnail:
-      if (!windows_file(pid, L"\\explorer.exe")) track_open(Source::kThumbnail, pid, L"shows a live copy of a window");
+      if (!stop && !windows_file(pid, L"\\explorer.exe")) track_open(Source::kThumbnail, pid, L"shows a live copy of a window");
       break;
     case DwmCall::kUnregisterThumbnail:
-      track_close(Source::kThumbnail, pid);
+      if (!stop) track_close(Source::kThumbnail, pid);
       break;
-    case DwmCall::kSharedSurface:
-      if (!tracking(Source::kMagnifier, pid)) track_seen(Source::kThumbnail, pid, L"copies a window", kReadShowsForMs);
+    case DwmCall::kSharedSurface: {
+      ULONG window = 0;
+      const bool named = uint_property(record, L"Hwnd", &window) && window;
+      if (named) g_surface_names_window = true;
+      if ((!named && (stop || g_surface_names_window)) || tracking(Source::kMagnifier, pid)) break;
+      track_seen(Source::kThumbnail, pid, L"copies a window", kReadShowsForMs, window);
       break;
+    }
     case DwmCall::kOther:
       break;
   }

@@ -2,6 +2,7 @@
 #include <objbase.h>
 #include <shellapi.h>
 #include <windowsx.h>
+#include <wtsapi32.h>
 
 #include <algorithm>
 #include <map>
@@ -229,6 +230,11 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
       if (wparam) DestroyWindow(window);
       return 0;
     case WM_DISPLAYCHANGE:
+      displays_changed();
+      refresh(window);
+      return 0;
+    case WM_WTSSESSION_CHANGE:
+      remote_changed();
       refresh(window);
       return 0;
     case WM_DESTROY: {
@@ -278,6 +284,7 @@ int run_tray(HINSTANCE instance, bool show) {
   ChangeWindowMessageFilterEx(window, g_taskbar_created, MSGFLT_ALLOW, nullptr);
   ChangeWindowMessageFilterEx(window, kShowMessage, MSGFLT_ALLOW, nullptr);
   add_icon(window);
+  WTSRegisterSessionNotification(window, NOTIFY_FOR_ALL_SESSIONS);
   if (settings().watch_input) start_input_watch(window);
   refresh(window);
   SetTimer(window, kPollTimer, 1000, nullptr);
