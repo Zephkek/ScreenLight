@@ -43,6 +43,9 @@ std::vector<Watcher> collect_watchers() {
     append(&all, remote_viewers());
   }
   if (s.watch_input) append(&all, input_senders());
+  for (Watcher& w : possible_watchers()) {
+    if (watched(w)) all.push_back(std::move(w));
+  }
   for (Watcher& w : from_service) {
     if (watched(w) && !own_window(w)) all.push_back(std::move(w));
   }

@@ -28,11 +28,13 @@ struct Row {
   SYSTEMTIME ended{};
   bool active = true;
   bool ignored = false;
+  bool possible = false;
 };
 
 constexpr size_t kMaxRows = 200;
 constexpr int kNowGroup = 1;
 constexpr int kEarlierGroup = 2;
+constexpr int kPossibleGroup = 3;
 constexpr UINT kOpenLocation = 1;
 constexpr UINT kProperties = 2;
 constexpr UINT kIgnore = 3;
@@ -114,7 +116,7 @@ std::wstring clock_text(const SYSTEMTIME& time) {
 }
 
 int active_rows() {
-  return int(std::count_if(g_rows.begin(), g_rows.end(), [](const Row& r) { return r.active && !r.ignored; }));
+  return int(std::count_if(g_rows.begin(), g_rows.end(), [](const Row& r) { return r.active && !r.ignored && !r.possible; }));
 }
 
 std::wstring status_text() {
@@ -125,7 +127,7 @@ std::wstring status_text() {
 }
 
 bool same_watcher(const Row& row, const Watcher& w) {
-  return row.active && row.source == w.source && row.pid == w.pid && row.name == w.name &&
+  return row.active && row.source == w.source && row.pid == w.pid && row.name == w.name && row.possible == w.possible &&
          (w.source == Source::kInput || row.what == w.what);
 }
 
@@ -218,14 +220,14 @@ void row_menu(LPARAM where) {
   }
   HMENU menu = CreatePopupMenu();
   if (pid && can_end(pid)) {
-    AppendMenuW(menu, MF_STRING, kEnd, L"End program");
+    AppendMenuW(menu, MF_STRING, kEnd, L"End program...");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   }
   if (!path.empty()) {
     AppendMenuW(menu, MF_STRING, kOpenLocation, L"Open file location");
     AppendMenuW(menu, MF_STRING, kProperties, L"Properties");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | (was_ignored ? MF_CHECKED : MF_UNCHECKED), kIgnore, L"Ignore this program");
+    AppendMenuW(menu, MF_STRING | (was_ignored ? MF_CHECKED : MF_UNCHECKED), kIgnore, L"Trust this program");
     SetMenuDefaultItem(menu, kOpenLocation, FALSE);
   }
   if (std::any_of(g_rows.begin(), g_rows.end(), [](const Row& r) { return !r.active; })) {
@@ -291,7 +293,7 @@ void fill() {
     LVITEMW item{};
     item.mask = LVIF_TEXT | LVIF_GROUPID | LVIF_IMAGE | LVIF_PARAM;
     item.iItem = int(i);
-    item.iGroupId = row.active ? kNowGroup : kEarlierGroup;
+    item.iGroupId = !row.active ? kEarlierGroup : row.possible ? kPossibleGroup : kNowGroup;
     item.iImage = icon_for(row.path);
     item.lParam = LPARAM(i);
     item.pszText = const_cast<wchar_t*>(row.name.c_str());
@@ -348,7 +350,7 @@ LRESULT notify(HWND window, NMHDR* header) {
       if (draw->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
       if (draw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
         const Row* row = row_at(int(draw->nmcd.dwItemSpec));
-        if (row && row->ignored) draw->clrText = GetSysColor(COLOR_GRAYTEXT);
+        if (row && (row->ignored || (row->possible && row->active))) draw->clrText = GetSysColor(COLOR_GRAYTEXT);
       }
       return CDRF_DODEFAULT;
     }
@@ -487,6 +489,7 @@ void create(HINSTANCE instance) {
   }
   ListView_EnableGroupView(g_list, TRUE);
   add_group(kNowGroup, L"Right now");
+  add_group(kPossibleGroup, L"Could watch");
   add_group(kEarlierGroup, L"Earlier");
   layout();
 }
@@ -502,7 +505,7 @@ std::vector<Watcher> track(const std::vector<Watcher>& watchers) {
   for (const Watcher& w : watchers) {
     const auto it = std::find_if(g_rows.begin(), g_rows.end(), [&w](const Row& r) { return same_watcher(r, w); });
     if (it == g_rows.end()) {
-      g_rows.insert(g_rows.begin(), Row{w.source, w.pid, w.name, w.what, w.path, now, {}, true, ignored(w)});
+      g_rows.insert(g_rows.begin(), Row{w.source, w.pid, w.name, w.what, w.path, now, {}, true, ignored(w), w.possible});
       seen.insert(seen.begin(), true);
       fresh.push_back(w);
       changed = true;
@@ -558,7 +561,8 @@ void offer_service() {
   config.pszMainInstruction = L"Turn on full detection?";
   config.pszContent =
       L"Screen Light needs its helper service to see screen recorders like OBS, screenshots, the magnifier and "
-      L"programs that listen to your keyboard. Windows asks for permission once, then the helper starts with Windows.";
+      L"programs that listen to your keyboard. Windows asks for permission once, then the helper starts with Windows. "
+      L"You can turn it off in Settings.";
   config.cButtons = ARRAYSIZE(buttons);
   config.pButtons = buttons;
   config.nDefaultButton = kTurnOnButton;
@@ -567,6 +571,15 @@ void offer_service() {
   if (SUCCEEDED(TaskDialogIndirect(&config, &picked, nullptr, nullptr)) && picked == kTurnOnButton) {
     run_elevated(g_window, L"--install");
   }
+}
+
+std::vector<Seen> seen_rows() {
+  std::vector<Seen> rows;
+  for (const Row& r : g_rows) {
+    Watcher w{r.source, r.pid, r.name, r.what, r.path, 0, r.possible};
+    rows.push_back({w, r.started, r.ended, r.active, r.ignored});
+  }
+  return rows;
 }
 
 void show_window(HINSTANCE instance, HWND tray) {

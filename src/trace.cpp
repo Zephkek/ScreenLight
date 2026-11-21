@@ -41,6 +41,8 @@ constexpr ULONG kKeypadUsage = 7;
 constexpr ULONG kBackgroundPolls = 32;
 constexpr ULONGLONG kPollShowsForMs = 10000;
 constexpr wchar_t kListens[] = L"listens to the keyboard";
+constexpr wchar_t kReadsTyping[] = L"can read what you type in other programs";
+constexpr int kJournalPlayback = 1;
 constexpr ULONG kEventIdFilter = 0x80000200;
 
 struct EventIdFilter {
@@ -69,6 +71,18 @@ bool uint_property(PEVENT_RECORD record, const wchar_t* name, ULONG* value) {
   ULONGLONG raw = 0;
   if (TdhGetProperty(record, 0, nullptr, 1, &descriptor, size, reinterpret_cast<BYTE*>(&raw)) != ERROR_SUCCESS) return false;
   *value = ULONG(raw);
+  return true;
+}
+
+bool text_property(PEVENT_RECORD record, const wchar_t* name, std::wstring* value) {
+  PROPERTY_DATA_DESCRIPTOR descriptor{reinterpret_cast<ULONGLONG>(name), ULONG_MAX, 0};
+  ULONG size = 0;
+  if (TdhGetPropertySize(record, 0, nullptr, 1, &descriptor, &size) != ERROR_SUCCESS || size < sizeof(wchar_t) || size > 4096) {
+    return false;
+  }
+  std::vector<wchar_t> text(size / sizeof(wchar_t) + 1);
+  if (TdhGetProperty(record, 0, nullptr, 1, &descriptor, size, reinterpret_cast<BYTE*>(text.data())) != ERROR_SUCCESS) return false;
+  value->assign(text.data());
   return true;
 }
 
@@ -120,6 +134,17 @@ void keyboard_listener(PEVENT_RECORD record) {
     case kHookEvent: {
       ULONG type = 0, result = 0;
       if (!uint_property(record, L"FilterType", &type) || !uint_property(record, L"ReturnValue", &result) || !result) return;
+      if (type == kJournalPlayback) {
+        if (!trusted_listener(pid)) track_open(Source::kInput, pid, L"plays back recorded keys and clicks");
+        return;
+      }
+      if (type == WH_GETMESSAGE) {
+        std::wstring library;
+        if (text_property(record, L"pstrLib", &library) && !library.empty() && !trusted_listener(pid)) {
+          track_open(Source::kKeyboard, pid, kReadsTyping);
+        }
+        return;
+      }
       if (type != WH_KEYBOARD && type != WH_KEYBOARD_LL && type != WH_JOURNALRECORD) return;
       if (!trusted_listener(pid)) track_open(Source::kKeyboard, pid, kListens);
       return;

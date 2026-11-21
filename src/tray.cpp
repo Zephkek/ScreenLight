@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <shellapi.h>
+#include <dbt.h>
 #include <windowsx.h>
 #include <wtsapi32.h>
 
@@ -17,8 +18,6 @@ namespace {
 constexpr UINT kTrayMessage = WM_APP + 1;
 constexpr UINT kOpen = 1;
 constexpr UINT kExit = 2;
-constexpr UINT kService = 3;
-constexpr UINT kStartup = 4;
 constexpr UINT kNotify = 5;
 constexpr UINT kSettings = 6;
 constexpr UINT_PTR kPollTimer = 1;
@@ -33,8 +32,8 @@ HICON g_balloon;
 bool g_lit;
 bool g_started;
 std::map<std::wstring, ULONGLONG, NoCase> g_last_seen;
-std::wstring g_tip = L"Screen Light - nothing is watching";
-std::vector<Watcher> g_active;
+std::wstring g_tip = L"Screen Light - Nothing is watching";
+std::wstring g_notified;
 
 NOTIFYICONDATAW tray_data(HWND window) {
   NOTIFYICONDATAW data{};
@@ -46,7 +45,7 @@ NOTIFYICONDATAW tray_data(HWND window) {
 
 void add_icon(HWND window) {
   NOTIFYICONDATAW data = tray_data(window);
-  data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+  data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
   data.uCallbackMessage = kTrayMessage;
   data.hIcon = g_lit ? g_on : g_off;
   lstrcpynW(data.szTip, g_tip.c_str(), ARRAYSIZE(data.szTip));
@@ -56,7 +55,7 @@ void add_icon(HWND window) {
 }
 
 std::wstring describe(const std::vector<Watcher>& watchers) {
-  if (watchers.empty()) return L"Screen Light - nothing is watching";
+  if (watchers.empty()) return L"Screen Light - Nothing is watching";
   std::wstring tip = L"Screen Light";
   for (const Watcher& w : watchers) tip += L"\n" + w.name + L" " + w.what;
   if (tip.size() > 127) tip = tip.substr(0, 124) + L"...";
@@ -71,6 +70,7 @@ std::wstring fit(std::wstring text, size_t room) {
 }
 
 void notify(HWND window, const std::vector<Watcher>& news) {
+  g_notified = news.empty() ? std::wstring() : news[0].name + L"\t" + news[0].what + L"\t" + std::to_wstring(news[0].pid);
   std::wstring title, body;
   if (news.size() == 1) {
     title = news[0].name + L" " + news[0].what;
@@ -82,8 +82,8 @@ void notify(HWND window, const std::vector<Watcher>& news) {
   }
   body += L"Click for more information.";
   NOTIFYICONDATAW data = tray_data(window);
-  data.uFlags = NIF_INFO;
-  data.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON | NIIF_RESPECT_QUIET_TIME;
+  data.uFlags = NIF_INFO | NIF_REALTIME;
+  data.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON | NIIF_RESPECT_QUIET_TIME | NIIF_NOSOUND;
   data.hBalloonIcon = g_balloon;
   lstrcpynW(data.szInfoTitle, fit(title, ARRAYSIZE(data.szInfoTitle)).c_str(), ARRAYSIZE(data.szInfoTitle));
   lstrcpynW(data.szInfo, fit(body, ARRAYSIZE(data.szInfo)).c_str(), ARRAYSIZE(data.szInfo));
@@ -110,87 +110,47 @@ void refresh(HWND window) {
   const std::vector<Watcher> fresh = track(watchers);
   std::vector<Watcher> active, news;
   for (const Watcher& w : watchers) {
-    if (!ignored(w)) active.push_back(w);
+    if (!ignored(w) && !w.possible) active.push_back(w);
   }
   for (const Watcher& w : fresh) {
-    if (!ignored(w)) news.push_back(w);
+    if (!ignored(w) && !w.possible) news.push_back(w);
   }
   notify_new(window, active, news);
   show_overlay(active);
-  update_flyout(active);
-  g_active = active;
+  update_flyout();
   const bool lit = !active.empty();
   std::wstring tip = describe(active);
   if (lit == g_lit && tip == g_tip) return;
   g_lit = lit;
   g_tip = std::move(tip);
   NOTIFYICONDATAW data = tray_data(window);
-  data.uFlags = NIF_ICON | NIF_TIP;
+  data.uFlags = NIF_ICON | NIF_TIP | NIF_SHOWTIP;
   data.hIcon = g_lit ? g_on : g_off;
   lstrcpynW(data.szTip, g_tip.c_str(), ARRAYSIZE(data.szTip));
   Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
-HBITMAP shield_bitmap() {
-  SHSTOCKICONINFO stock{};
-  stock.cbSize = sizeof stock;
-  if (FAILED(SHGetStockIconInfo(SIID_SHIELD, SHGSI_ICON | SHGSI_SMALLICON, &stock))) return nullptr;
-  const int cx = GetSystemMetrics(SM_CXSMICON), cy = GetSystemMetrics(SM_CYSMICON);
-  BITMAPINFO bi{};
-  bi.bmiHeader.biSize = sizeof bi.bmiHeader;
-  bi.bmiHeader.biWidth = cx;
-  bi.bmiHeader.biHeight = -cy;
-  bi.bmiHeader.biPlanes = 1;
-  bi.bmiHeader.biBitCount = 32;
-  void* bits = nullptr;
-  HDC dc = CreateCompatibleDC(nullptr);
-  HBITMAP bitmap = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-  if (bitmap) {
-    HGDIOBJ old = SelectObject(dc, bitmap);
-    DrawIconEx(dc, 0, 0, stock.hIcon, cx, cy, 0, nullptr, DI_NORMAL);
-    SelectObject(dc, old);
-  }
-  DeleteDC(dc);
-  DestroyIcon(stock.hIcon);
-  return bitmap;
-}
-
 void show_menu(HWND window, int x, int y) {
-  const bool installed = service_installed();
-  const bool startup = starts_with_windows();
   const bool notifications = settings().notifications;
   HMENU menu = CreatePopupMenu();
   AppendMenuW(menu, MF_STRING, kOpen, L"Open Screen Light");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING | (notifications ? MF_CHECKED : MF_UNCHECKED), kNotify, L"Show notifications");
-  AppendMenuW(menu, MF_STRING | (startup ? MF_CHECKED : MF_UNCHECKED), kStartup, L"Start with Windows");
-  AppendMenuW(menu, MF_STRING | (installed ? MF_CHECKED : MF_UNCHECKED), kService, L"Full detection");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING, kSettings, L"Settings...");
+  AppendMenuW(menu, MF_STRING, kSettings, L"Settings");
   AppendMenuW(menu, MF_STRING, kExit, L"Exit");
   SetMenuDefaultItem(menu, kOpen, FALSE);
-  HBITMAP shield = shield_bitmap();
-  if (shield) {
-    MENUITEMINFOW item{};
-    item.cbSize = sizeof item;
-    item.fMask = MIIM_BITMAP;
-    item.hbmpItem = shield;
-    SetMenuItemInfoW(menu, kService, FALSE, &item);
-  }
   SetForegroundWindow(window);
   const UINT picked = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, x, y, 0, window, nullptr);
   PostMessageW(window, WM_NULL, 0, 0);
   DestroyMenu(menu);
-  if (shield) DeleteObject(shield);
   if (picked == kOpen) show_window(g_instance, window);
-  if (picked == kStartup) start_with_windows(!startup);
   if (picked == kNotify) {
     Settings s = settings();
     s.notifications = !notifications;
     save_settings(s);
   }
   if (picked == kSettings) show_settings(g_instance, window);
-  if (picked == kService) run_elevated(window, installed ? L"--uninstall" : L"--install");
   if (picked == kExit) DestroyWindow(window);
 }
 
@@ -205,12 +165,15 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
         case WM_CONTEXTMENU:
           show_menu(window, GET_X_LPARAM(wparam), GET_Y_LPARAM(wparam));
           break;
+        case WM_LBUTTONDBLCLK:
+          show_window(g_instance, window);
+          break;
         case NIN_SELECT:
         case NIN_KEYSELECT:
-          toggle_flyout(g_instance, window, g_active);
+          toggle_flyout(g_instance, window);
           break;
         case NIN_BALLOONUSERCLICK:
-          show_window(g_instance, window);
+          toggle_flyout(g_instance, window, g_notified);
           break;
       }
       return 0;
@@ -238,6 +201,12 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
       displays_changed();
       refresh(window);
       return 0;
+    case WM_DEVICECHANGE:
+      if (wparam == DBT_DEVNODES_CHANGED) {
+        devices_changed();
+        refresh(window);
+      }
+      return TRUE;
     case WM_WTSSESSION_CHANGE:
       remote_changed();
       refresh(window);

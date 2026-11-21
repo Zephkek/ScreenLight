@@ -29,13 +29,13 @@ BEGIN
   LTEXT           "C&orner:", IDC_CORNER_LABEL, 15, 172, 122, 8
   COMBOBOX        IDC_CORNER, 140, 170, 145, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
 
-  GROUPBOX        "Ignored programs", -1, 7, 194, 286, 74
-  LTEXT           "These programs stay in the list but never turn the light red.", -1, 15, 206, 270, 8
+  GROUPBOX        "Trusted programs", -1, 7, 194, 286, 74
+  LTEXT           "Trusted programs stay in the list, but never turn the light red or notify.", -1, 15, 206, 270, 8
   LISTBOX         IDC_IGNORED, 15, 218, 208, 42, LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL | WS_BORDER | WS_TABSTOP
   PUSHBUTTON      "&Add...", IDC_ADD, 229, 218, 56, 14
   PUSHBUTTON      "Re&move", IDC_REMOVE, 229, 236, 56, 14
 
-  GROUPBOX        "Service", -1, 7, 272, 286, 30
+  GROUPBOX        "Full detection", -1, 7, 272, 286, 30
   LTEXT           "", IDC_SERVICE_TEXT, 15, 286, 186, 8
   PUSHBUTTON      "", IDC_SERVICE, 205, 283, 80, 14
 

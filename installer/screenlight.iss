@@ -20,7 +20,7 @@ MinVersion=6.1sp1
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
-RestartApplications=yes
+RestartApplications=no
 UsePreviousTasks=yes
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
@@ -37,7 +37,7 @@ SolidCompression=yes
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "service"; Description: "Install the service so screenshots, screen recorders and keyboard listeners show up too"; Check: IsAdminInstallMode
+Name: "service"; Description: "Turn on full detection (recommended): see screen recorders, screenshots and keyboard listeners"; Check: IsAdminInstallMode
 Name: "autostart"; Description: "Start {#AppName} with Windows"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 
@@ -54,8 +54,11 @@ Root: HKCU; Subkey: "Software\{#AppName}"; Flags: uninsdeletekey
 
 [Run]
 Filename: "{app}\{#AppExe}"; Parameters: "--install"; StatusMsg: "Installing the service..."; Tasks: service; Flags: waituntilterminated
-Filename: "{app}\{#AppExe}"; Description: "Open {#AppName}"; Flags: postinstall nowait runasoriginaluser skipifsilent
-Filename: "{app}\{#AppExe}"; Parameters: "--tray"; Flags: nowait runasoriginaluser; Check: WizardSilent
+Filename: "{app}\{#AppExe}"; Parameters: "--unelevated"; Description: "Open {#AppName}"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\{#AppExe}"; Parameters: "--unelevated --tray"; Flags: nowait; Check: WizardSilent
+
+[UninstallDelete]
+Type: files; Name: "{app}\running.txt"
 
 [UninstallRun]
 Filename: "{app}\{#AppExe}"; Parameters: "--uninstall"; RunOnceId: "RemoveService"; Flags: waituntilterminated; Check: IsAdminInstallMode

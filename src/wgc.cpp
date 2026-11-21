@@ -19,8 +19,6 @@ namespace {
 constexpr wchar_t kInstancePrefix[] = L"CaptureService_";
 constexpr DWORD kUserServiceTypes = SERVICE_WIN32 | 0x40 | 0x80;
 constexpr ULONG kObjectTypesInformation = 3;
-constexpr ULONG kProcessBasicInformation = 0;
-constexpr ULONG kProcessWow64Information = 26;
 constexpr ULONG kProcessHandleInformation = 51;
 constexpr LONG kInfoLengthMismatch = LONG(0xC0000004);
 constexpr ULONGLONG kRelistMs = 60000;
@@ -166,51 +164,8 @@ bool holds_type(HANDLE process, ULONG type) {
   return false;
 }
 
-template <typename Pointer>
-bool read(HANDLE process, ULONGLONG at, Pointer* value) {
-  SIZE_T done = 0;
-  return ReadProcessMemory(process, reinterpret_cast<const void*>(ULONG_PTR(at)), value, sizeof *value, &done) &&
-         done == sizeof *value;
-}
-
-template <typename Pointer>
-bool module_in_list(HANDLE process, ULONGLONG head, ULONGLONG name_offset, const wchar_t* wanted) {
-  Pointer link = 0;
-  if (!read(process, head, &link)) return false;
-  const size_t wanted_length = wcslen(wanted);
-  for (int i = 0; i < 2048 && link && link != head; ++i) {
-    USHORT length = 0;
-    Pointer buffer = 0;
-    if (!read(process, link + name_offset, &length) || !read(process, link + name_offset + sizeof(Pointer), &buffer)) {
-      return false;
-    }
-    if (length == wanted_length * sizeof(wchar_t) && buffer) {
-      wchar_t name[64] = {};
-      SIZE_T done = 0;
-      if (ReadProcessMemory(process, reinterpret_cast<const void*>(ULONG_PTR(buffer)), name, length, &done) &&
-          done == length && _wcsnicmp(name, wanted, wanted_length) == 0) {
-        return true;
-      }
-    }
-    if (!read(process, link, &link)) return false;
-  }
-  return false;
-}
-
 bool has_module(HANDLE process, const wchar_t* wanted) {
-  if (wcslen(wanted) >= 64) return false;
-  ULONG_PTR peb32 = 0;
-  if (g_query_process(process, kProcessWow64Information, &peb32, sizeof peb32, nullptr) >= 0 && peb32) {
-    uint32_t ldr = 0;
-    if (read(process, peb32 + 0x0c, &ldr) && ldr && module_in_list<uint32_t>(process, ldr + 0x14, 0x24, wanted)) return true;
-  }
-  PROCESS_BASIC_INFORMATION basic{};
-  if (g_query_process(process, kProcessBasicInformation, &basic, sizeof basic, nullptr) < 0 || !basic.PebBaseAddress) {
-    return false;
-  }
-  uint64_t ldr = 0;
-  return read(process, ULONGLONG(ULONG_PTR(basic.PebBaseAddress)) + 0x18, &ldr) && ldr &&
-         module_in_list<uint64_t>(process, ldr + 0x20, 0x48, wanted);
+  return find_module(process, [wanted](const std::wstring& path) { return _wcsicmp(file_part(path).c_str(), wanted) == 0; });
 }
 
 std::vector<Watcher> look(DWORD session, const std::vector<DWORD>& known) {

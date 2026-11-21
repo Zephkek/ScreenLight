@@ -19,11 +19,26 @@ constexpr DWORD kWaitForExitMs = 3000;
 
 using QueryProcessFn = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
 
+using IsCriticalFn = BOOL(WINAPI*)(HANDLE, PBOOL);
+
 bool critical(HANDLE process) {
+  static const auto is_critical =
+      reinterpret_cast<IsCriticalFn>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "IsProcessCritical"));
+  BOOL yes = FALSE;
+  if (is_critical && is_critical(process, &yes)) return yes != FALSE;
   static const auto query =
       reinterpret_cast<QueryProcessFn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess"));
   ULONG flag = 0;
   return query && query(process, kBreakOnTermination, &flag, sizeof flag, nullptr) >= 0 && flag;
+}
+
+bool critical(DWORD pid) {
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!process) process = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+  if (!process) return false;
+  const bool yes = critical(process);
+  CloseHandle(process);
+  return yes;
 }
 
 ULONGLONG started_at(HANDLE process) {
@@ -73,11 +88,17 @@ void refused(HWND owner, const std::wstring& name) {
              TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
 }
 
+bool in_folder(const std::wstring& path, const wchar_t* folder, UINT length) {
+  return length && path.size() > length + 1 && _wcsnicmp(path.c_str(), folder, length) == 0 && path[length] == L'\\' &&
+         path.find(L'\\', length + 1) == std::wstring::npos;
+}
+
 bool core_windows(const std::wstring& path) {
-  wchar_t windows[MAX_PATH];
-  const UINT length = GetWindowsDirectoryW(windows, ARRAYSIZE(windows));
-  if (!length || length >= ARRAYSIZE(windows) || path.size() <= length ||
-      _wcsnicmp(path.c_str(), windows, length) != 0 || path[length] != L'\\') {
+  wchar_t system[MAX_PATH], wow[MAX_PATH];
+  const UINT system_length = GetSystemDirectoryW(system, ARRAYSIZE(system));
+  const UINT wow_length = GetSystemWow64DirectoryW(wow, ARRAYSIZE(wow));
+  if (!in_folder(path, system, system_length < ARRAYSIZE(system) ? system_length : 0) &&
+      !in_folder(path, wow, wow_length < ARRAYSIZE(wow) ? wow_length : 0)) {
     return false;
   }
   const std::wstring name = path.substr(path.find_last_of(L'\\') + 1);
@@ -92,12 +113,7 @@ bool core_windows(const std::wstring& path) {
 bool can_end(DWORD pid) {
   if (pid <= 4 || pid == GetCurrentProcessId()) return false;
   const std::wstring path = process_path(pid);
-  if (path.empty() || core_windows(path)) return false;
-  HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
-  if (!process) return GetLastError() == ERROR_ACCESS_DENIED;
-  const bool allowed = !critical(process);
-  CloseHandle(process);
-  return allowed;
+  return !path.empty() && !core_windows(path) && !critical(pid);
 }
 
 bool end_program(HWND owner, DWORD pid, const std::wstring& name) {
@@ -111,7 +127,8 @@ bool end_program(HWND owner, DWORD pid, const std::wstring& name) {
     return false;
   }
   if (process) {
-    const bool ended = TerminateProcess(process, 1) && WaitForSingleObject(process, kWaitForExitMs) == WAIT_OBJECT_0;
+    const bool ended = TerminateProcess(process, 1) != FALSE;
+    if (ended) WaitForSingleObject(process, kWaitForExitMs);
     CloseHandle(process);
     if (!ended && !process_gone(pid)) refused(owner, name);
     return ended;
@@ -135,14 +152,15 @@ int end_elevated(const wchar_t* pid_text, const wchar_t* started_text) {
     if (GetLastError() != ERROR_INVALID_PARAMETER) refused(nullptr, process_name(pid));
     return 1;
   }
-  int code = 1;
-  if (started_at(process) == started && !critical(process) && !core_windows(process_path(pid)) && TerminateProcess(process, 1)) {
-    WaitForSingleObject(process, kWaitForExitMs);
-    code = 0;
+  if (started_at(process) != started || critical(process) || core_windows(process_path(pid))) {
+    CloseHandle(process);
+    return 1;
   }
+  const bool ended = TerminateProcess(process, 1) != FALSE;
+  if (ended) WaitForSingleObject(process, kWaitForExitMs);
   CloseHandle(process);
-  if (code) refused(nullptr, process_name(pid));
-  return code;
+  if (!ended) refused(nullptr, process_name(pid));
+  return ended ? 0 : 1;
 }
 
 }  // namespace screenlight

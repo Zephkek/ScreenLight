@@ -40,16 +40,16 @@ bool checked(HWND dialog, int id) { return IsDlgButtonChecked(dialog, id) == BST
 void show_service(HWND dialog) {
   const bool installed = service_installed();
   const bool running = service_running();
-  const wchar_t* text = running     ? L"The service is running."
-                        : installed ? L"The service is installed but not answering."
-                                    : L"The service is not installed.";
+  const wchar_t* text = running     ? L"Full detection is on."
+                        : installed ? L"Full detection is installed but not running."
+                                    : L"Full detection is off.";
   SetDlgItemTextW(dialog, IDC_SERVICE_TEXT, text);
-  SetDlgItemTextW(dialog, IDC_SERVICE, installed ? L"Remove service" : L"Install service");
+  SetDlgItemTextW(dialog, IDC_SERVICE, installed ? L"Turn off" : L"Turn on");
   Button_SetElevationRequiredState(GetDlgItem(dialog, IDC_SERVICE), TRUE);
   const bool keyboard = windows_build() >= kKeyboardBuild;
   const wchar_t* needs = running    ? L""
-                         : keyboard ? L"Screenshots, recorders and keyboard listeners need the service."
-                                    : L"Screenshots and recorders need the service.";
+                         : keyboard ? L"Screenshots, recorders and keyboard listeners need full detection."
+                                    : L"Screenshots and recorders need full detection.";
   SetDlgItemTextW(dialog, IDC_NEEDS, needs);
 }
 
@@ -87,7 +87,7 @@ void add_program(HWND dialog) {
   open.lpstrFilter = L"Programs (*.exe)\0*.exe\0All files\0*.*\0";
   open.lpstrFile = path;
   open.nMaxFile = ARRAYSIZE(path);
-  open.lpstrTitle = L"Choose a program to ignore";
+  open.lpstrTitle = L"Choose a program to trust";
   open.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_DONTADDTORECENT;
   if (!GetOpenFileNameW(&open)) return;
   HWND list = GetDlgItem(dialog, IDC_IGNORED);

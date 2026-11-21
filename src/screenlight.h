@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cwchar>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,7 @@ struct Watcher {
   std::wstring what;
   std::wstring path;
   ULONG window = 0;
+  bool possible = false;
 };
 
 enum { kOverlayOff, kOverlayBadge, kOverlayBorder };
@@ -63,6 +65,8 @@ void remote_changed();
 void displays_changed();
 std::vector<Watcher> input_senders();
 std::vector<Watcher> game_captures();
+std::vector<Watcher> possible_watchers();
+void devices_changed();
 std::vector<Watcher> running_captures(DWORD session);
 void remember_running_captures();
 void forget_running_captures(DWORD session);
@@ -78,6 +82,7 @@ void track_open(Source source, DWORD pid, const std::wstring& what);
 void track_close(Source source, DWORD pid);
 bool tracking(Source source, DWORD pid);
 std::vector<Watcher> tracked(DWORD session);
+void restore_tracked();
 
 bool start_trace();
 bool flush_needed();
@@ -93,6 +98,8 @@ std::vector<Watcher> service_watchers();
 DWORD service_sender(std::wstring* name, std::wstring* path);
 bool service_running();
 
+bool find_module(HANDLE process, const std::function<bool(const std::wstring&)>& visit);
+std::wstring file_part(const std::wstring& path);
 std::wstring process_path(DWORD pid);
 std::wstring process_name(DWORD pid, const char* fallback = nullptr);
 bool process_gone(DWORD pid);
@@ -101,15 +108,25 @@ std::vector<char> file_bytes(const std::wstring& path);
 HICON make_light(bool lit, int size);
 void show_overlay(const std::vector<Watcher>& active);
 
+struct Seen {
+  Watcher watcher;
+  SYSTEMTIME started{};
+  SYSTEMTIME ended{};
+  bool active = true;
+  bool trusted = false;
+};
+
 std::vector<Watcher> track(const std::vector<Watcher>& watchers);
+std::vector<Seen> seen_rows();
 void show_window(HINSTANCE instance, HWND tray);
-void toggle_flyout(HINSTANCE instance, HWND owner, const std::vector<Watcher>& active);
-void update_flyout(const std::vector<Watcher>& active);
+void toggle_flyout(HINSTANCE instance, HWND owner, const std::wstring& select = std::wstring());
+void update_flyout();
 bool flyout_message(MSG* msg);
 bool flyout_visible();
 
 int run_tray(HINSTANCE instance, bool show);
 void run_elevated(HWND window, const wchar_t* verb);
+int run_unelevated(const wchar_t* args);
 void offer_service();
 bool can_end(DWORD pid);
 bool end_program(HWND owner, DWORD pid, const std::wstring& name);

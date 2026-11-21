@@ -38,6 +38,7 @@ void WINAPI service_main(DWORD, LPWSTR*) {
   g_status_handle = RegisterServiceCtrlHandlerExW(kServiceName, control, nullptr);
   if (!g_status_handle) return;
   g_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  restore_tracked();
   start_trace();
   HANDLE pipe = CreateThread(nullptr, 0, pipe_thread, nullptr, 0, nullptr);
   set_state(SERVICE_RUNNING);
@@ -138,6 +139,7 @@ int uninstall_service() {
   }
   CloseServiceHandle(manager);
   const std::wstring dir = install_dir();
+  if (!dir.empty()) DeleteFileW((dir + L"\\running.txt").c_str());
   wchar_t self[MAX_PATH];
   const DWORD length = GetModuleFileNameW(nullptr, self, ARRAYSIZE(self));
   const std::wstring exe = dir + L"\\ScreenLight.exe";
