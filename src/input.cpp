@@ -54,7 +54,11 @@ struct Sender {
   ULONGLONG seen = 0;
   bool keys = false;
   bool mouse = false;
+  bool touch = false;
+  bool pen = false;
 };
+
+enum class Kind { kKeys, kMouse, kTouch, kPen };
 
 constexpr ULONG kProcessInformation = 5;
 constexpr ULONG kThreadLastSystemCall = 21;
@@ -136,7 +140,7 @@ bool in_send_input(DWORD tid) {
   return inside;
 }
 
-void record(DWORD pid, const std::wstring& name, const std::wstring& path, bool keys, ULONGLONG now) {
+void record(DWORD pid, const std::wstring& name, const std::wstring& path, Kind kind, ULONGLONG now) {
   bool fresh = false;
   {
     std::lock_guard<std::mutex> hold(g_lock);
@@ -148,17 +152,17 @@ void record(DWORD pid, const std::wstring& name, const std::wstring& path, bool 
       fresh = true;
     }
     it->seen = now;
-    (keys ? it->keys : it->mouse) = true;
+    (kind == Kind::kKeys ? it->keys : kind == Kind::kMouse ? it->mouse : kind == Kind::kTouch ? it->touch : it->pen) = true;
   }
   if (fresh && g_notify) PostMessageW(g_notify, kRefreshMessage, 0, 0);
 }
 
-void injected(bool keys) {
+void injected(Kind kind) {
   const ULONGLONG now = GetTickCount64();
   for (size_t i = 0; i < g_known.size(); ++i) {
     if (!in_send_input(g_known[i].first)) continue;
     std::rotate(g_known.begin(), g_known.begin() + i, g_known.begin() + i + 1);
-    record(g_known[0].second, std::wstring(), std::wstring(), keys, now);
+    record(g_known[0].second, std::wstring(), std::wstring(), kind, now);
     return;
   }
   if (now - g_last_scan < kScanEveryMs) return;
@@ -171,16 +175,27 @@ void injected(bool keys) {
   } else {
     pid = service_sender(&name, &path);
   }
-  record(pid, name, path, keys, now);
+  record(pid, name, path, kind, now);
 }
 
+constexpr ULONG_PTR kPointerSignature = 0xFF515700;
+constexpr ULONG_PTR kSignatureMask = 0xFFFFFF00;
+constexpr ULONG_PTR kTouchBit = 0x80;
+
 LRESULT CALLBACK mouse_hook(int code, WPARAM wparam, LPARAM lparam) {
-  if (code == HC_ACTION && (reinterpret_cast<const MSLLHOOKSTRUCT*>(lparam)->flags & LLMHF_INJECTED)) injected(false);
+  const auto* info = reinterpret_cast<const MSLLHOOKSTRUCT*>(lparam);
+  if (code == HC_ACTION && (info->flags & LLMHF_INJECTED)) {
+    if ((info->dwExtraInfo & kSignatureMask) == kPointerSignature) {
+      record(0, L"A program", std::wstring(), (info->dwExtraInfo & kTouchBit) ? Kind::kTouch : Kind::kPen, GetTickCount64());
+    } else {
+      injected(Kind::kMouse);
+    }
+  }
   return CallNextHookEx(nullptr, code, wparam, lparam);
 }
 
 LRESULT CALLBACK key_hook(int code, WPARAM wparam, LPARAM lparam) {
-  if (code == HC_ACTION && (reinterpret_cast<const KBDLLHOOKSTRUCT*>(lparam)->flags & LLKHF_INJECTED)) injected(true);
+  if (code == HC_ACTION && (reinterpret_cast<const KBDLLHOOKSTRUCT*>(lparam)->flags & LLKHF_INJECTED)) injected(Kind::kKeys);
   return CallNextHookEx(nullptr, code, wparam, lparam);
 }
 
@@ -253,9 +268,13 @@ std::vector<Watcher> input_senders() {
                                  [now](const Sender& s) { return now - s.seen > kForgetAfterMs; }),
                   g_senders.end());
   for (const Sender& s : g_senders) {
-    const wchar_t* what = s.keys && s.mouse ? L"simulates key presses and mouse input"
-                          : s.keys          ? L"simulates key presses"
-                                            : L"simulates mouse input";
+    std::vector<std::wstring> parts;
+    if (s.keys) parts.push_back(L"key presses");
+    if (s.mouse) parts.push_back(L"mouse input");
+    if (s.touch) parts.push_back(L"touch input");
+    if (s.pen) parts.push_back(L"pen input");
+    std::wstring what = L"simulates";
+    for (size_t i = 0; i < parts.size(); ++i) what += (i == 0 ? L" " : i + 1 == parts.size() ? L" and " : L", ") + parts[i];
     found.push_back({Source::kInput, s.pid, s.name, what, s.path});
   }
   return found;

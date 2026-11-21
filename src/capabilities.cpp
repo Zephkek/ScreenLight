@@ -39,7 +39,7 @@ constexpr wchar_t kKeyboardClass[] = L"{4D36E96B-E325-11CE-BFC1-08002BE10318}";
 constexpr wchar_t kMouseClass[] = L"{4D36E96F-E325-11CE-BFC1-08002BE10318}";
 constexpr GUID kKeyboardGuid = {0x4d36e96b, 0xe325, 0x11ce, {0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18}};
 constexpr GUID kMouseGuid = {0x4d36e96f, 0xe325, 0x11ce, {0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18}};
-constexpr ULONGLONG kLookAgainMs = 10000;
+constexpr ULONGLONG kLookAgainMs = 60000;
 constexpr ULONGLONG kPruneEveryMs = 5000;
 
 std::map<DWORD, Hooked> g_hooked;

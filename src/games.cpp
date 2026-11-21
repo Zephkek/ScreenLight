@@ -11,7 +11,7 @@
 namespace screenlight {
 namespace {
 
-constexpr ULONGLONG kLookEveryMs = 2000;
+constexpr ULONGLONG kLookEveryMs = 5000;
 constexpr ULONGLONG kRecorderEveryMs = 10000;
 constexpr ACCESS_MASK kDirectoryQuery = 1;
 constexpr LONG kMoreEntries = 0x105;

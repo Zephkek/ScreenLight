@@ -9,6 +9,15 @@
 namespace screenlight {
 namespace {
 
+constexpr GUID kShellWindowsClass = {0x9ba05972, 0xf6a8, 0x11cf, {0xa4, 0x42, 0x00, 0xa0, 0xc9, 0x0a, 0x8f, 0x39}};
+constexpr GUID kShellWindows = {0x85cb6900, 0x4d95, 0x11cf, {0x96, 0x0c, 0x00, 0x80, 0xc7, 0xf4, 0xee, 0x85}};
+constexpr GUID kServiceProvider = {0x6d5140c1, 0x7436, 0x11ce, {0x80, 0x34, 0x00, 0xaa, 0x00, 0x60, 0x09, 0xfa}};
+constexpr GUID kTopLevelBrowser = {0x4c96be40, 0x915c, 0x11cf, {0x99, 0xd3, 0x00, 0xaa, 0x00, 0x4a, 0xe8, 0x37}};
+constexpr GUID kShellBrowser = {0x000214e2, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+constexpr GUID kDispatch = {0x00020400, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+constexpr GUID kFolderViewDual = {0xe7a1af80, 0x4d96, 0x11cf, {0x96, 0x0c, 0x00, 0x80, 0xc7, 0xf4, 0xee, 0x85}};
+constexpr GUID kShellDispatch2 = {0xa4c6892c, 0x3ba9, 0x11d2, {0x9d, 0xea, 0x00, 0xc0, 0x4f, 0xb1, 0x61, 0x62}};
+
 template <typename T>
 void release(T*& object) {
   if (object) object->Release();
@@ -41,16 +50,16 @@ bool run_from_desktop(const wchar_t* file, const wchar_t* args) {
   VARIANT root{};
   LONG window = 0;
   bool ran = false;
-  if (SUCCEEDED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_LOCAL_SERVER, IID_IShellWindows,
+  if (SUCCEEDED(CoCreateInstance(kShellWindowsClass, nullptr, CLSCTX_LOCAL_SERVER, kShellWindows,
                                  reinterpret_cast<void**>(&windows))) &&
       windows->FindWindowSW(&location, &root, SWC_DESKTOP, &window, SWFO_NEEDDISPATCH, &desktop) == S_OK && desktop &&
-      SUCCEEDED(desktop->QueryInterface(IID_IServiceProvider, reinterpret_cast<void**>(&provider))) &&
-      SUCCEEDED(provider->QueryService(SID_STopLevelBrowser, IID_IShellBrowser, reinterpret_cast<void**>(&browser))) &&
+      SUCCEEDED(desktop->QueryInterface(kServiceProvider, reinterpret_cast<void**>(&provider))) &&
+      SUCCEEDED(provider->QueryService(kTopLevelBrowser, kShellBrowser, reinterpret_cast<void**>(&browser))) &&
       SUCCEEDED(browser->QueryActiveShellView(&view)) &&
-      SUCCEEDED(view->GetItemObject(SVGIO_BACKGROUND, IID_IDispatch, reinterpret_cast<void**>(&background))) &&
-      SUCCEEDED(background->QueryInterface(IID_IShellFolderViewDual, reinterpret_cast<void**>(&folder))) &&
+      SUCCEEDED(view->GetItemObject(SVGIO_BACKGROUND, kDispatch, reinterpret_cast<void**>(&background))) &&
+      SUCCEEDED(background->QueryInterface(kFolderViewDual, reinterpret_cast<void**>(&folder))) &&
       SUCCEEDED(folder->get_Application(&application)) &&
-      SUCCEEDED(application->QueryInterface(IID_IShellDispatch2, reinterpret_cast<void**>(&shell)))) {
+      SUCCEEDED(application->QueryInterface(kShellDispatch2, reinterpret_cast<void**>(&shell)))) {
     BSTR path = SysAllocString(file);
     VARIANT arguments{};
     arguments.vt = VT_BSTR;

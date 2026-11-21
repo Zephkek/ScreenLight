@@ -46,8 +46,9 @@ std::vector<Watcher> collect_watchers() {
   for (Watcher& w : possible_watchers()) {
     if (watched(w)) all.push_back(std::move(w));
   }
+  const DWORD self = GetCurrentProcessId();
   for (Watcher& w : from_service) {
-    if (watched(w) && !own_window(w)) all.push_back(std::move(w));
+    if (w.pid != self && watched(w) && !own_window(w)) all.push_back(std::move(w));
   }
   return all;
 }
