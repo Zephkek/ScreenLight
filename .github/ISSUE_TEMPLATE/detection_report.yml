@@ -1,0 +1,96 @@
+name: Detection report
+description: Screen Light missed something, named the wrong program, or showed something that wasn't watching
+title: "[Detection]: "
+labels:
+  - bug
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when a program watched your screen or keyboard and Screen Light didn't show it, or when it showed a
+        program that wasn't watching.
+
+        Please write issues and pull requests yourself. Do not use AI-generated text.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong?
+      options:
+        - A program watched and Screen Light didn't show it
+        - Screen Light showed a program that wasn't watching
+        - Screen Light named the wrong program
+    validations:
+      required: true
+
+  - type: input
+    id: program
+    attributes:
+      label: Program
+      description: The program this is about, with its version. If it's malware, don't link it. Its name or SHA-256 is enough.
+      placeholder: "For example: OBS Studio 31.0.2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: shown
+    attributes:
+      label: What Screen Light showed
+      description: Type the line from the list, or paste a screenshot of it. Leave this empty if nothing showed up.
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: What the program was doing at the time, and how to make it do that again.
+      placeholder: |
+        1. Start ...
+        2. Open ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Screen Light version
+      description: The release version or the commit hash.
+      placeholder: "For example: 0.1.0 (bottom of the settings) or 1a2b3c4"
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Windows version
+      description: Run winver to see it.
+      placeholder: "For example: Windows 11 24H2, or Windows 7 SP1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: full-detection
+    attributes:
+      label: Full detection
+      description: The settings show it at the bottom.
+      options:
+        - "On"
+        - "Off"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add screenshots, other programs that were running, or any other useful details.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and did not find a duplicate.
+          required: true

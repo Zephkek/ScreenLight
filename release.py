@@ -18,6 +18,7 @@ def main():
     portable = os.path.join(OUT, f'ScreenLight-{VERSION}-portable.zip')
     with zipfile.ZipFile(portable, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         z.write(exe, 'ScreenLight.exe')
+        z.write(os.path.join(HERE, 'LICENSE'), 'LICENSE.txt')
         z.writestr('ScreenLight.ini', '\ufeff[Settings]\r\n'.encode('utf-16-le'))
     for name in sorted(os.listdir(OUT)):
         print(name, os.path.getsize(os.path.join(OUT, name)))

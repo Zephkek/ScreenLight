@@ -1,0 +1,98 @@
+name: Bug report
+description: Report a reproducible problem in Screen Light
+title: "[Bug]: "
+labels:
+  - bug
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please include enough detail for someone else to reproduce the bug. If Screen Light missed something or showed
+        something that wasn't watching, use the detection report instead.
+
+        Please write issues and pull requests yourself. Do not use AI-generated text.
+
+  - type: input
+    id: version
+    attributes:
+      label: Screen Light version
+      description: The release version or the commit hash.
+      placeholder: "For example: 0.1.0 (bottom of the settings) or 1a2b3c4"
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Windows version
+      description: Run winver to see it.
+      placeholder: "For example: Windows 11 24H2, or Windows 7 SP1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation method
+      options:
+        - Installer, for everyone on the PC
+        - Installer, only for me
+        - Portable zip
+        - Built from source
+    validations:
+      required: true
+
+  - type: dropdown
+    id: full-detection
+    attributes:
+      label: Full detection
+      description: The settings show it at the bottom.
+      options:
+        - "On"
+        - "Off"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: List the smallest reliable sequence of actions that triggers the problem.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Explain what you expected to happen instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add screenshots, videos, workarounds, or any other useful details.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and did not find a duplicate.
+          required: true
