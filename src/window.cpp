@@ -46,6 +46,7 @@ std::vector<Row> g_rows;
 HWND g_window;
 HWND g_status;
 HWND g_hint;
+HWND g_hint_text;
 HWND g_list;
 HWND g_settings;
 HWND g_tray;
@@ -131,13 +132,31 @@ bool same_watcher(const Row& row, const Watcher& w) {
          (w.source == Source::kInput || row.what == w.what);
 }
 
-void load_title_color() {
-  g_title_color = GetSysColor(COLOR_WINDOWTEXT);
-  if (HTHEME theme = OpenThemeData(g_window, L"TEXTSTYLE")) {
-    COLORREF color;
-    if (SUCCEEDED(GetThemeColor(theme, TEXT_MAININSTRUCTION, 0, TMT_TEXTCOLOR, &color))) g_title_color = color;
-    CloseThemeData(theme);
-  }
+void load_title_color() { g_title_color = palette().title; }
+
+void apply_theme() {
+  theme_window(g_window);
+  theme_control(g_list, L"DarkMode_ItemsView", L"Explorer");
+  theme_control(ListView_GetHeader(g_list), L"DarkMode_ItemsView");
+  theme_list(g_list);
+  theme_control(ListView_GetToolTips(g_list), L"DarkMode_Explorer");
+  const Palette& p = palette();
+  ListView_SetBkColor(g_list, p.window);
+  ListView_SetTextBkColor(g_list, p.window);
+  ListView_SetTextColor(g_list, p.text);
+  theme_link(g_hint);
+  theme_link(g_settings);
+  load_title_color();
+}
+
+int text_width(HFONT font, const wchar_t* text) {
+  HDC dc = GetDC(g_window);
+  HGDIOBJ old = SelectObject(dc, font);
+  SIZE size{};
+  GetTextExtentPoint32W(dc, text, int(wcslen(text)), &size);
+  SelectObject(dc, old);
+  ReleaseDC(g_window, dc);
+  return size.cx;
 }
 
 void show_lit(bool lit) {
@@ -171,7 +190,9 @@ void make_images() {
 
 void set_fonts() {
   SendMessageW(g_status, WM_SETFONT, reinterpret_cast<WPARAM>(g_title_font), TRUE);
-  for (HWND control : {g_hint, g_settings, g_list}) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
+  for (HWND control : {g_hint, g_hint_text, g_settings, g_list}) {
+    SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
+  }
 }
 
 const Row* row_at(int item) {
@@ -274,9 +295,11 @@ void layout() {
   const int margin = px(11), title = px(24), link = px(60);
   const int width = client.right - 2 * margin;
   MoveWindow(g_settings, client.right - margin - link, margin + px(4), link, px(18), TRUE);
-  const int hint = (GetWindowLongW(g_hint, GWL_STYLE) & WS_VISIBLE) ? int(SendMessageW(g_hint, LM_GETIDEALHEIGHT, width, 0)) : 0;
+  const int hint = (GetWindowLongW(g_hint, GWL_STYLE) & WS_VISIBLE) ? px(20) : 0;
   MoveWindow(g_status, margin, margin, width - link, title, TRUE);
-  MoveWindow(g_hint, margin, margin + title, width, hint, TRUE);
+  const int said = text_width(g_font, L"Full detection is off.") + px(2), turn_on = text_width(g_font, L"Turn on") + px(4);
+  MoveWindow(g_hint_text, margin, margin + title, said, hint, TRUE);
+  MoveWindow(g_hint, margin + said + px(3), margin + title, turn_on, hint, TRUE);
   const int top = margin + title + hint + px(7);
   MoveWindow(g_list, margin, top, client.right - 2 * margin, std::max<int>(0, client.bottom - top - margin), TRUE);
   fit_columns();
@@ -285,6 +308,7 @@ void layout() {
 void fill() {
   SetWindowTextW(g_status, status_text().c_str());
   ShowWindow(g_hint, g_service ? SW_HIDE : SW_SHOWNA);
+  ShowWindow(g_hint_text, g_service ? SW_HIDE : SW_SHOWNA);
   layout();
   SendMessageW(g_list, WM_SETREDRAW, FALSE, 0);
   ListView_DeleteAllItems(g_list);
@@ -350,7 +374,7 @@ LRESULT notify(HWND window, NMHDR* header) {
       if (draw->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
       if (draw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
         const Row* row = row_at(int(draw->nmcd.dwItemSpec));
-        if (row && (row->ignored || (row->possible && row->active))) draw->clrText = GetSysColor(COLOR_GRAYTEXT);
+        if (row && (row->ignored || (row->possible && row->active))) draw->clrText = palette().gray;
       }
       return CDRF_DODEFAULT;
     }
@@ -398,11 +422,20 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
       load_title_color();
       InvalidateRect(g_status, nullptr, TRUE);
       break;
+    case WM_ERASEBKGND: {
+      RECT client;
+      GetClientRect(window, &client);
+      FillRect(reinterpret_cast<HDC>(wparam), &client, window_brush());
+      return 1;
+    }
     case WM_CTLCOLORSTATIC: {
       HDC dc = reinterpret_cast<HDC>(wparam);
-      SetTextColor(dc, reinterpret_cast<HWND>(lparam) == g_status ? g_title_color : GetSysColor(COLOR_WINDOWTEXT));
-      SetBkColor(dc, GetSysColor(COLOR_WINDOW));
-      return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+      const HWND control = reinterpret_cast<HWND>(lparam);
+      const Palette& p = palette();
+      const bool link = control == g_hint || control == g_settings;
+      SetTextColor(dc, control == g_status ? g_title_color : link && dark_mode() ? p.link : p.text);
+      SetBkColor(dc, p.window);
+      return reinterpret_cast<LRESULT>(window_brush());
     }
     case WM_NOTIFY:
       return notify(window, reinterpret_cast<NMHDR*>(lparam));
@@ -462,17 +495,18 @@ void create(HINSTANCE instance) {
   load_title_color();
   g_status = CreateWindowExW(0, WC_STATICW, L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, g_window,
                              nullptr, instance, nullptr);
-  g_hint = CreateWindowExW(0, WC_LINK,
-                           L"Full detection is off. <a>Turn on</a>",
-                           WS_CHILD | WS_TABSTOP, 0, 0, 0, 0, g_window, nullptr, instance, nullptr);
+  g_hint_text = CreateWindowExW(0, WC_STATICW, L"Full detection is off.", WS_CHILD | SS_LEFT | SS_NOPREFIX | SS_CENTERIMAGE,
+                                0, 0, 0, 0, g_window, nullptr, instance, nullptr);
+  g_hint = CreateWindowExW(0, WC_LINK, L"<a>Turn on</a>", WS_CHILD | WS_TABSTOP, 0, 0, 0, 0, g_window, nullptr, instance,
+                           nullptr);
   g_settings = CreateWindowExW(0, WC_LINK, L"<a>Settings</a>", WS_CHILD | WS_VISIBLE | WS_TABSTOP | LWS_RIGHT, 0, 0, 0, 0,
                                g_window, nullptr, instance, nullptr);
   g_list = CreateWindowExW(0, WC_LISTVIEWW, L"",
                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER,
                            0, 0, 0, 0, g_window, nullptr, instance, nullptr);
   set_fonts();
-  SetWindowTheme(g_list, L"Explorer", nullptr);
   ListView_SetExtendedListViewStyle(g_list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_INFOTIP);
+  apply_theme();
   make_images();
   const int time = time_column_width();
   const struct {
@@ -568,6 +602,12 @@ void offer_service() {
   if (SUCCEEDED(TaskDialogIndirect(&config, &picked, nullptr, nullptr)) && picked == kTurnOnButton) {
     run_elevated(g_window, L"--install");
   }
+}
+
+void retheme_window() {
+  if (!g_window) return;
+  apply_theme();
+  RedrawWindow(g_window, nullptr, nullptr, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
 }
 
 std::vector<Seen> seen_rows() {

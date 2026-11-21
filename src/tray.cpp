@@ -181,7 +181,22 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
     case kShowMessage:
       show_window(g_instance, window);
       return 0;
+    case WM_SETTINGCHANGE:
+      if (wparam == SPI_SETHIGHCONTRAST ||
+          (lparam && lstrcmpiW(reinterpret_cast<const wchar_t*>(lparam), L"ImmersiveColorSet") == 0)) {
+        if (update_theme()) {
+          close_flyout();
+          retheme_window();
+          retheme_settings();
+        }
+      }
+      return 0;
     case kApplyMessage:
+      if (update_theme()) {
+        close_flyout();
+        retheme_window();
+        retheme_settings();
+      }
       if (settings().watch_input) {
         start_input_watch(window);
       } else {
@@ -237,6 +252,7 @@ void run_elevated(HWND window, const wchar_t* verb) {
 int run_tray(HINSTANCE instance, bool show) {
   g_instance = instance;
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+  update_theme();
   g_taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
   RegisterApplicationRestart(L"--tray", RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT);
   const int size = GetSystemMetrics(SM_CXSMICON);
@@ -252,6 +268,7 @@ int run_tray(HINSTANCE instance, bool show) {
   if (!window) return 1;
   ChangeWindowMessageFilterEx(window, g_taskbar_created, MSGFLT_ALLOW, nullptr);
   ChangeWindowMessageFilterEx(window, kShowMessage, MSGFLT_ALLOW, nullptr);
+  set_overlay_owner(window);
   add_icon(window);
   WTSRegisterSessionNotification(window, NOTIFY_FOR_ALL_SESSIONS);
   if (settings().watch_input) start_input_watch(window);

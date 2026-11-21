@@ -53,10 +53,41 @@ void show_service(HWND dialog) {
   SetDlgItemTextW(dialog, IDC_NEEDS, needs);
 }
 
-void show_corner(HWND dialog) {
-  const bool badge = ComboBox_GetCurSel(GetDlgItem(dialog, IDC_OVERLAY)) == kOverlayBadge;
-  EnableWindow(GetDlgItem(dialog, IDC_CORNER), badge);
-  EnableWindow(GetDlgItem(dialog, IDC_CORNER_LABEL), badge);
+void show_badge(HWND dialog) {
+  const int kind = std::max(0, ComboBox_GetCurSel(GetDlgItem(dialog, IDC_OVERLAY)));
+  EnableWindow(GetDlgItem(dialog, IDC_BADGE_HINT), kind == kOverlayBadge);
+  EnableWindow(GetDlgItem(dialog, IDC_BADGE_RESET), kind == kOverlayBadge);
+  preview_overlay(kind);
+}
+
+BOOL CALLBACK theme_child(HWND control, LPARAM) {
+  wchar_t name[32] = {};
+  GetClassNameW(control, name, ARRAYSIZE(name));
+  if (_wcsicmp(name, WC_BUTTONW) == 0) {
+    if ((GetWindowLongW(control, GWL_STYLE) & BS_TYPEMASK) == BS_GROUPBOX) {
+      theme_group(control);
+    } else {
+      theme_control(control, L"DarkMode_Explorer");
+    }
+  } else if (_wcsicmp(name, WC_COMBOBOXW) == 0) {
+    theme_control(control, L"DarkMode_CFD");
+  } else if (_wcsicmp(name, WC_LISTBOXW) == 0) {
+    theme_control(control, L"DarkMode_Explorer");
+    theme_frame(control);
+  }
+  return TRUE;
+}
+
+void apply_theme(HWND dialog) {
+  theme_window(dialog);
+  EnumChildWindows(dialog, theme_child, 0);
+}
+
+bool check_box(HWND control) {
+  wchar_t name[32] = {};
+  GetClassNameW(control, name, ARRAYSIZE(name));
+  const LONG type = GetWindowLongW(control, GWL_STYLE) & BS_TYPEMASK;
+  return _wcsicmp(name, WC_BUTTONW) == 0 && (type == BS_AUTOCHECKBOX || type == BS_CHECKBOX);
 }
 
 void fit_list(HWND list) {
@@ -109,21 +140,24 @@ void fill(HWND dialog) {
     set_check(dialog, IDC_KEYBOARD, false);
     EnableWindow(GetDlgItem(dialog, IDC_KEYBOARD), FALSE);
   }
-  HWND overlay = GetDlgItem(dialog, IDC_OVERLAY);
-  for (const wchar_t* text : {L"Nothing", L"A badge in the corner", L"A red frame around the screen"}) {
-    ComboBox_AddString(overlay, text);
+  HWND theme = GetDlgItem(dialog, IDC_THEME);
+  if (dark_supported()) {
+    for (const wchar_t* text : {L"Same as Windows", L"Light", L"Dark"}) ComboBox_AddString(theme, text);
+    ComboBox_SetCurSel(theme, s.theme);
+  } else {
+    for (const wchar_t* text : {L"Light", L"Dark"}) ComboBox_AddString(theme, text);
+    ComboBox_SetCurSel(theme, s.theme == 2 ? 1 : 0);
   }
+  HWND overlay = GetDlgItem(dialog, IDC_OVERLAY);
+  for (const wchar_t* text : {L"Nothing", L"A badge", L"A red frame around the screen"}) ComboBox_AddString(overlay, text);
   ComboBox_SetCurSel(overlay, s.overlay);
-  HWND corner = GetDlgItem(dialog, IDC_CORNER);
-  for (const wchar_t* text : {L"Top right", L"Top left", L"Bottom right", L"Bottom left"}) ComboBox_AddString(corner, text);
-  ComboBox_SetCurSel(corner, s.corner);
   HWND list = GetDlgItem(dialog, IDC_IGNORED);
   for (const std::wstring& path : s.ignored) ListBox_AddString(list, path.c_str());
   fit_list(list);
-  std::wstring about = L"Screen Light 0.1.0";
+  std::wstring about = L"Screen Light 0.1.0 by Zeph";
   if (portable()) about += L" (portable)";
   SetDlgItemTextW(dialog, IDC_ABOUT, about.c_str());
-  show_corner(dialog);
+  show_badge(dialog);
   show_remove(dialog);
   show_service(dialog);
 }
@@ -136,7 +170,8 @@ void save(HWND dialog) {
   if (IsWindowEnabled(GetDlgItem(dialog, IDC_KEYBOARD))) s.watch_keyboard = checked(dialog, IDC_KEYBOARD);
   s.watch_remote = checked(dialog, IDC_REMOTE);
   s.overlay = std::max(0, ComboBox_GetCurSel(GetDlgItem(dialog, IDC_OVERLAY)));
-  s.corner = std::max(0, ComboBox_GetCurSel(GetDlgItem(dialog, IDC_CORNER)));
+  const int theme = std::max(0, ComboBox_GetCurSel(GetDlgItem(dialog, IDC_THEME)));
+  s.theme = dark_supported() ? theme : theme == 1 ? 2 : 0;
   s.ignored.clear();
   HWND list = GetDlgItem(dialog, IDC_IGNORED);
   for (int i = 0, n = ListBox_GetCount(list); i < n; ++i) {
@@ -149,22 +184,43 @@ void save(HWND dialog) {
   if (g_tray) PostMessageW(g_tray, kApplyMessage, 0, 0);
 }
 
-INT_PTR CALLBACK options_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM) {
+INT_PTR CALLBACK options_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam) {
   switch (message) {
     case WM_INITDIALOG:
       g_dialog = dialog;
       SendMessageW(dialog, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(g_small));
       SendMessageW(dialog, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(g_big));
+      apply_theme(dialog);
       fill(dialog);
       SetTimer(dialog, kServiceTimer, 1000, nullptr);
       return TRUE;
     case WM_TIMER:
       if (wparam == kServiceTimer) show_service(dialog);
       return TRUE;
+    case WM_CTLCOLORDLG:
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLORBTN:
+    case WM_CTLCOLORLISTBOX: {
+      if (!dark_mode()) return FALSE;
+      HDC dc = reinterpret_cast<HDC>(wparam);
+      const Palette& p = palette();
+      SetTextColor(dc, IsWindowEnabled(reinterpret_cast<HWND>(lparam)) ? p.text : p.gray);
+      SetBkColor(dc, p.window);
+      return reinterpret_cast<INT_PTR>(window_brush());
+    }
+    case WM_NOTIFY: {
+      const auto* header = reinterpret_cast<const NMHDR*>(lparam);
+      if (header->code != NM_CUSTOMDRAW || !check_box(header->hwndFrom)) return FALSE;
+      SetWindowLongPtrW(dialog, DWLP_MSGRESULT, draw_check(reinterpret_cast<const NMCUSTOMDRAW*>(header)));
+      return TRUE;
+    }
     case WM_COMMAND:
       switch (LOWORD(wparam)) {
         case IDC_OVERLAY:
-          if (HIWORD(wparam) == CBN_SELCHANGE) show_corner(dialog);
+          if (HIWORD(wparam) == CBN_SELCHANGE) show_badge(dialog);
+          return TRUE;
+        case IDC_BADGE_RESET:
+          reset_badge();
           return TRUE;
         case IDC_IGNORED:
           if (HIWORD(wparam) == LBN_SELCHANGE) show_remove(dialog);
@@ -196,6 +252,7 @@ INT_PTR CALLBACK options_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM) 
     case WM_DESTROY:
       KillTimer(dialog, kServiceTimer);
       g_dialog = nullptr;
+      preview_overlay(-1);
       return TRUE;
   }
   return FALSE;
@@ -204,6 +261,12 @@ INT_PTR CALLBACK options_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM) 
 }  // namespace
 
 bool settings_message(MSG* msg) { return g_dialog && IsDialogMessageW(g_dialog, msg); }
+
+void retheme_settings() {
+  if (!g_dialog) return;
+  apply_theme(g_dialog);
+  RedrawWindow(g_dialog, nullptr, nullptr, RDW_ERASE | RDW_FRAME | RDW_INVALIDATE | RDW_ALLCHILDREN);
+}
 
 void show_settings(HINSTANCE instance, HWND tray) {
   g_tray = tray;

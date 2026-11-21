@@ -130,6 +130,7 @@ bool load_lookup() {
   return !g_inject_calls.empty();
 }
 
+// hacky: the sender is whichever thread's last syscall injects input
 bool in_send_input(DWORD tid) {
   HANDLE thread = OpenThread(THREAD_GET_CONTEXT, FALSE, tid);
   if (!thread) return false;

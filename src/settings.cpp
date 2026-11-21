@@ -31,7 +31,10 @@ struct Flag {
 constexpr Flag kFlags[] = {{L"Notifications", &Settings::notifications}, {L"WatchScreen", &Settings::watch_screen},
                            {L"WatchInput", &Settings::watch_input},       {L"WatchKeyboard", &Settings::watch_keyboard},
                            {L"WatchRemote", &Settings::watch_remote},     {L"AskedForService", &Settings::asked_service}};
-constexpr Number kNumbers[] = {{L"Overlay", &Settings::overlay}, {L"OverlayCorner", &Settings::corner}};
+constexpr Number kNumbers[] = {{L"Overlay", &Settings::overlay},          {L"OverlayCorner", &Settings::corner},
+                               {L"BadgeAnchor", &Settings::badge_anchor}, {L"BadgeX", &Settings::badge_x},
+                               {L"BadgeY", &Settings::badge_y},           {L"BadgeScale", &Settings::badge_scale},
+                               {L"Theme", &Settings::theme}};
 
 Settings g_settings;
 bool g_loaded;
@@ -45,7 +48,11 @@ std::wstring ini_path() {
 }
 
 int read_number(const wchar_t* name, int fallback) {
-  if (portable()) return int(GetPrivateProfileIntW(kSection, name, fallback, ini_path().c_str()));
+  if (portable()) {
+    wchar_t text[32];
+    if (!GetPrivateProfileStringW(kSection, name, L"", text, ARRAYSIZE(text), ini_path().c_str()) || !text[0]) return fallback;
+    return int(wcstol(text, nullptr, 10));
+  }
   DWORD value = DWORD(fallback), size = sizeof value;
   RegGetValueW(HKEY_CURRENT_USER, kKey, name, RRF_RT_REG_DWORD, nullptr, &value, &size);
   return int(value);
@@ -134,6 +141,9 @@ const Settings& settings() {
     for (const Number& n : kNumbers) g_settings.*n.value = read_number(n.name, g_settings.*n.value);
     g_settings.overlay = std::clamp(g_settings.overlay, 0, 2);
     g_settings.corner = std::clamp(g_settings.corner, 0, 3);
+    g_settings.badge_anchor = std::clamp(g_settings.badge_anchor, -1, 5);
+    g_settings.badge_scale = std::clamp(g_settings.badge_scale, 60, 300);
+    g_settings.theme = std::clamp(g_settings.theme, 0, 2);
     g_settings.ignored = read_list(kIgnoredName);
     g_settings.distrusted = read_list(kDistrustedName);
     g_loaded = true;
@@ -178,7 +188,8 @@ bool listed(const std::vector<std::wstring>& list, const std::wstring& path) {
 
 bool trusted(Source source, const std::wstring& path) {
   if (ignored_path(path)) return true;
-  return source == Source::kKeyboard && !listed(settings().distrusted, path) && known_publisher(path);
+  return source == Source::kKeyboard && !listed(settings().distrusted, path) && !script_host(path) &&
+         known_publisher(path);
 }
 
 bool ignored(const Watcher& w) { return trusted(w.source, w.path); }

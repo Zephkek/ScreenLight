@@ -3,9 +3,11 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <uxtheme.h>
+#include <vssym32.h>
 #include <windowsx.h>
 
 #include <algorithm>
+#include <cwchar>
 #include <cwctype>
 #include <map>
 #include <string>
@@ -46,6 +48,7 @@ HWND g_list;
 HWND g_trust;
 HWND g_end;
 HWND g_shield;
+HWND g_off_text;
 HWND g_turn_on;
 HWND g_open;
 HWND g_settings;
@@ -206,6 +209,16 @@ HWND child(const wchar_t* type, const wchar_t* text, DWORD style, UINT id, HFONT
   return control;
 }
 
+int text_width(HFONT font, const wchar_t* text) {
+  HDC dc = GetDC(g_flyout);
+  HGDIOBJ old = SelectObject(dc, font);
+  SIZE size{};
+  GetTextExtentPoint32W(dc, text, int(wcslen(text)), &size);
+  SelectObject(dc, old);
+  ReleaseDC(g_flyout, dc);
+  return size.cx;
+}
+
 int text_height(HFONT font, const std::wstring& text, int width) {
   HDC dc = GetDC(g_flyout);
   HGDIOBJ old = SelectObject(dc, font);
@@ -316,6 +329,22 @@ void place(int width, int height) {
   keep_tooltip_on_top();
 }
 
+int metric(int index) {
+  using MetricFn = int(WINAPI*)(int, UINT);
+  static const auto get = reinterpret_cast<MetricFn>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetSystemMetricsForDpi"));
+  return get ? get(index, UINT(g_dpi)) : GetSystemMetrics(index);
+}
+
+void set_tile_width(int width) {
+  LVTILEVIEWINFO info{};
+  info.cbSize = sizeof info;
+  info.dwMask = LVTVIM_TILESIZE | LVTVIM_COLUMNS;
+  info.dwFlags = LVTVIF_FIXEDSIZE;
+  info.sizeTile = {width, px(44)};
+  info.cLines = 1;
+  ListView_SetTileViewInfo(g_list, &info);
+}
+
 void layout() {
   const int margin = px(11), width = px(320), inner = width - 2 * margin, eye = px(32);
   SendMessageW(g_eye_box, STM_SETICON, reinterpret_cast<WPARAM>(g_eye[active_count() ? 1 : 0]), 0);
@@ -339,20 +368,18 @@ void layout() {
     const bool earlier = std::any_of(g_items.begin(), g_items.end(), [](const Item& i) { return !i.seen.active; });
     const int cap = kVisibleTiles * px(46) + (int(now) + int(earlier)) * px(30) + px(6);
     MoveWindow(g_list, margin, y, inner, cap, FALSE);
-    LVTILEVIEWINFO info{};
-    info.cbSize = sizeof info;
-    info.dwMask = LVTVIM_TILESIZE | LVTVIM_COLUMNS;
-    info.dwFlags = LVTVIF_FIXEDSIZE;
-    info.sizeTile = {inner - GetSystemMetrics(SM_CXVSCROLL) - px(6), px(44)};
-    info.cLines = 1;
-    ListView_SetTileViewInfo(g_list, &info);
-    RECT last{};
-    int list_h = cap;
+    const int scrollbar = metric(SM_CXVSCROLL);
+    set_tile_width(inner - scrollbar - px(6));
+    RECT first{}, last{};
+    POINT origin{};
+    ListView_GetOrigin(g_list, &origin);
+    const int inset = ListView_GetItemRect(g_list, 0, &first, LVIR_BOUNDS) ? std::max(0, int(first.left)) : 0;
+    int content = cap;
     if (ListView_GetItemRect(g_list, int(g_items.size()) - 1, &last, LVIR_BOUNDS)) {
-      POINT origin{};
-      ListView_GetOrigin(g_list, &origin);
-      list_h = std::min(cap, int(last.bottom + origin.y) + px(4));
+      content = int(last.bottom + origin.y) + px(4);
     }
+    set_tile_width(inner - 2 * inset - (content > cap ? scrollbar : 0));
+    const int list_h = std::min(cap, content);
     MoveWindow(g_list, margin, y, inner, list_h, FALSE);
     y += list_h + px(7);
   }
@@ -369,11 +396,14 @@ void layout() {
   }
   const bool off = !service_running();
   ShowWindow(g_shield, off ? SW_SHOWNA : SW_HIDE);
+  ShowWindow(g_off_text, off ? SW_SHOWNA : SW_HIDE);
   ShowWindow(g_turn_on, off ? SW_SHOWNA : SW_HIDE);
   if (off) {
     const int shield = px(16), text_left = margin + shield + px(6);
+    const int said = text_width(g_font, L"Full detection is off.") + px(2);
     MoveWindow(g_shield, margin, y + px(1), shield, shield, FALSE);
-    MoveWindow(g_turn_on, text_left, y, width - text_left - margin, px(18), FALSE);
+    MoveWindow(g_off_text, text_left, y, said, px(18), FALSE);
+    MoveWindow(g_turn_on, text_left + said + px(3), y, text_width(g_font, L"Turn on") + px(4), px(18), FALSE);
     y += px(18) + px(11);
   }
   g_footer_top = y;
@@ -473,6 +503,47 @@ void link(UINT id) {
   }
 }
 
+LRESULT draw_tile(NMLVCUSTOMDRAW* draw) {
+  const int index = int(draw->nmcd.dwItemSpec);
+  LVITEMW lv{};
+  lv.mask = LVIF_PARAM | LVIF_IMAGE | LVIF_STATE;
+  lv.iItem = index;
+  lv.stateMask = LVIS_SELECTED;
+  if (!ListView_GetItem(g_list, &lv) || size_t(lv.lParam) >= g_items.size()) return CDRF_DODEFAULT;
+  HDC dc = draw->nmcd.hdc;
+  RECT bounds{}, icon{}, label{};
+  ListView_GetItemRect(g_list, index, &bounds, LVIR_BOUNDS);
+  ListView_GetItemRect(g_list, index, &icon, LVIR_ICON);
+  ListView_GetItemRect(g_list, index, &label, LVIR_LABEL);
+  const bool selected = (lv.state & LVIS_SELECTED) != 0, hot = (draw->nmcd.uItemState & CDIS_HOT) != 0;
+  const int state = selected ? (hot ? LISS_HOTSELECTED : GetFocus() == g_list ? LISS_SELECTED : LISS_SELECTEDNOTFOCUS)
+                    : hot    ? LISS_HOT
+                             : 0;
+  if (state) {
+    if (HTHEME theme = OpenThemeData(g_list, L"ListView")) {
+      DrawThemeBackground(theme, dc, LVP_LISTITEM, state, &bounds, nullptr);
+      CloseThemeData(theme);
+    }
+  }
+  const int size = px(32);
+  ImageList_Draw(g_images, lv.iImage, dc, icon.left + (icon.right - icon.left - size) / 2,
+                 icon.top + (icon.bottom - icon.top - size) / 2, ILD_TRANSPARENT);
+  const Seen& s = g_items[lv.lParam].seen;
+  const std::wstring second = detail(s);
+  HGDIOBJ old = SelectObject(dc, g_font);
+  TEXTMETRICW metrics{};
+  GetTextMetricsW(dc, &metrics);
+  const int line = metrics.tmHeight, top = label.top + (label.bottom - label.top - 2 * line) / 2;
+  RECT first{label.left, top, label.right, top + line}, next{label.left, top + line, label.right, top + 2 * line};
+  SetBkMode(dc, TRANSPARENT);
+  SetTextColor(dc, palette().text);
+  DrawTextW(dc, s.watcher.name.c_str(), -1, &first, DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+  SetTextColor(dc, palette().gray);
+  DrawTextW(dc, second.c_str(), -1, &next, DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+  SelectObject(dc, old);
+  return CDRF_SKIPDEFAULT;
+}
+
 LRESULT list_notify(NMHDR* header) {
   switch (header->code) {
     case LVN_ITEMCHANGED: {
@@ -495,6 +566,13 @@ LRESULT list_notify(NMHDR* header) {
       GetCursorPos(&at);
       row_menu(at.x, at.y);
       return 0;
+    }
+    case NM_CUSTOMDRAW: {
+      auto* draw = reinterpret_cast<NMLVCUSTOMDRAW*>(header);
+      if (!dark_mode() || draw->dwItemType != LVCDI_ITEM) return CDRF_DODEFAULT;
+      if (draw->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
+      if (draw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) return draw_tile(draw);
+      return CDRF_DODEFAULT;
     }
     case LVN_GETINFOTIPW: {
       auto* tip = reinterpret_cast<NMLVGETINFOTIPW*>(header);
@@ -542,6 +620,9 @@ LRESULT CALLBACK flyout_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     case WM_NOTIFY: {
       auto* header = reinterpret_cast<NMHDR*>(lparam);
       if (header->hwndFrom == g_list) return list_notify(header);
+      if (header->hwndFrom == g_trust && header->code == NM_CUSTOMDRAW) {
+        return draw_check(reinterpret_cast<const NMCUSTOMDRAW*>(header));
+      }
       if (header->code == NM_CLICK || header->code == NM_RETURN) link(UINT(header->idFrom));
       return 0;
     }
@@ -552,18 +633,20 @@ LRESULT CALLBACK flyout_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
       RECT top = client, band = client;
       top.bottom = g_footer_top;
       band.top = g_footer_top;
-      FillRect(dc, &top, GetSysColorBrush(COLOR_WINDOW));
-      FillRect(dc, &band, GetSysColorBrush(COLOR_BTNFACE));
+      FillRect(dc, &top, window_brush());
+      FillRect(dc, &band, band_brush());
       return 1;
     }
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORBTN: {
       HDC dc = reinterpret_cast<HDC>(wparam);
       HWND control = reinterpret_cast<HWND>(lparam);
+      const Palette& p = palette();
       const bool band = control == g_open || control == g_settings;
-      SetTextColor(dc, GetSysColor(control == g_turn_on ? COLOR_GRAYTEXT : COLOR_WINDOWTEXT));
-      SetBkColor(dc, GetSysColor(band ? COLOR_BTNFACE : COLOR_WINDOW));
-      return reinterpret_cast<LRESULT>(GetSysColorBrush(band ? COLOR_BTNFACE : COLOR_WINDOW));
+      const bool link = band || control == g_turn_on;
+      SetTextColor(dc, control == g_off_text ? p.gray : link && dark_mode() ? p.link : p.text);
+      SetBkColor(dc, band ? p.band : p.window);
+      return reinterpret_cast<LRESULT>(band ? band_brush() : window_brush());
     }
     case WM_CLOSE:
       DestroyWindow(window);
@@ -618,10 +701,15 @@ void create_controls() {
   g_title = child(WC_STATICW, L"", WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, g_title_font);
   g_list = child(WC_LISTVIEWW, L"Programs",
                  WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOCOLUMNHEADER, kList, g_font);
-  SetWindowTheme(g_list, L"Explorer", nullptr);
+  theme_control(g_list, L"DarkMode_ItemsView", L"Explorer");
   ListView_SetExtendedListViewStyle(g_list, LVS_EX_DOUBLEBUFFER | LVS_EX_INFOTIP | LVS_EX_FULLROWSELECT);
+  const Palette& p = palette();
+  ListView_SetBkColor(g_list, p.window);
+  ListView_SetTextBkColor(g_list, p.window);
+  ListView_SetTextColor(g_list, p.text);
   if (HWND tip = ListView_GetToolTips(g_list)) {
     SetWindowLongPtrW(tip, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(g_flyout));
+    theme_control(tip, L"DarkMode_Explorer");
   }
   g_images = ImageList_Create(px(32), px(32), ILC_COLOR32 | ILC_MASK, 8, 8);
   ListView_SetImageList(g_list, g_images, LVSIL_NORMAL);
@@ -637,11 +725,15 @@ void create_controls() {
   add_group(kEarlierGroup, L"Earlier");
   g_trust = child(WC_BUTTONW, L"&Trust", WS_TABSTOP | BS_AUTOCHECKBOX, kTrust, g_font);
   g_end = child(WC_BUTTONW, L"&End", WS_TABSTOP | BS_PUSHBUTTON, kEnd, g_font);
+  theme_control(g_trust, L"DarkMode_Explorer");
+  theme_control(g_end, L"DarkMode_Explorer");
   g_shield = child(WC_STATICW, L"", SS_ICON | SS_REALSIZECONTROL | SS_CENTERIMAGE, 0, g_font);
   SendMessageW(g_shield, STM_SETICON, reinterpret_cast<WPARAM>(g_shield_icon), 0);
-  g_turn_on = child(WC_LINK, L"Full detection is off. <a>Turn on</a>", WS_TABSTOP, kTurnOn, g_font);
+  g_off_text = child(WC_STATICW, L"Full detection is off.", SS_LEFT | SS_NOPREFIX | SS_CENTERIMAGE, 0, g_font);
+  g_turn_on = child(WC_LINK, L"<a>Turn on</a>", WS_TABSTOP, kTurnOn, g_font);
   g_open = child(WC_LINK, L"<a>Open Screen Light</a>", WS_VISIBLE | WS_TABSTOP, kOpen, g_font);
   g_settings = child(WC_LINK, L"<a>Settings</a>", WS_VISIBLE | WS_TABSTOP | LWS_RIGHT, kSettings, g_font);
+  for (HWND link : {g_turn_on, g_open, g_settings}) theme_link(link);
 }
 
 }  // namespace
@@ -651,6 +743,7 @@ bool flyout_message(MSG* msg) { return g_flyout && IsDialogMessageW(g_flyout, ms
 void toggle_flyout(HINSTANCE instance, HWND owner, const std::wstring& select) {
   const ULONGLONG now = GetTickCount64();
   if (g_flyout) {
+    // a balloon click toggles twice in a row, keep it open
     if (now - g_opened_at < GetDoubleClickTime()) {
       SetForegroundWindow(g_flyout);
       return;
@@ -669,6 +762,7 @@ void toggle_flyout(HINSTANCE instance, HWND owner, const std::wstring& select) {
   if (!g_flyout) return;
   g_dpi = window_dpi(g_flyout);
   make_fonts();
+  theme_window(g_flyout);
   round_corners();
   create_controls();
   g_selected = select;
@@ -684,5 +778,7 @@ void update_flyout() {
 }
 
 bool flyout_visible() { return g_flyout != nullptr; }
+
+void close_flyout() { hide(); }
 
 }  // namespace screenlight

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <commctrl.h>
 
 #include <cwchar>
 #include <functional>
@@ -43,6 +44,11 @@ struct Settings {
   bool asked_service = false;
   int overlay = kOverlayOff;
   int corner = 0;
+  int badge_anchor = -1;
+  int badge_x = 0;
+  int badge_y = 0;
+  int badge_scale = 100;
+  int theme = 0;
   std::vector<std::wstring> ignored;
   std::vector<std::wstring> distrusted;
 };
@@ -111,10 +117,35 @@ std::wstring file_part(const std::wstring& path);
 std::wstring process_path(DWORD pid);
 std::wstring process_name(DWORD pid, const char* fallback = nullptr);
 bool process_gone(DWORD pid);
+bool script_host(const std::wstring& path);
 std::vector<char> file_bytes(const std::wstring& path);
 
 HICON make_light(bool lit, int size);
 void show_overlay(const std::vector<Watcher>& active);
+void set_overlay_owner(HWND owner);
+void preview_overlay(int kind);
+void reset_badge();
+
+struct Palette {
+  COLORREF window, band, text, gray, title, link, line;
+};
+
+bool dark_supported();
+bool dark_mode();
+bool light_badge();
+bool update_theme();
+const Palette& palette();
+HBRUSH window_brush();
+HBRUSH band_brush();
+void theme_window(HWND window);
+void theme_control(HWND control, const wchar_t* dark_class, const wchar_t* light_class = nullptr);
+void theme_link(HWND link);
+void theme_group(HWND group);
+void theme_frame(HWND control);
+void theme_list(HWND list);
+LRESULT draw_check(const NMCUSTOMDRAW* draw);
+void retheme_window();
+void retheme_settings();
 
 struct Seen {
   Watcher watcher;
@@ -131,6 +162,7 @@ void toggle_flyout(HINSTANCE instance, HWND owner, const std::wstring& select = 
 void update_flyout();
 bool flyout_message(MSG* msg);
 bool flyout_visible();
+void close_flyout();
 
 int run_tray(HINSTANCE instance, bool show);
 void run_elevated(HWND window, const wchar_t* verb);

@@ -15,6 +15,7 @@ constexpr ULONGLONG kLookEveryMs = 5000;
 constexpr ULONGLONG kRecorderEveryMs = 10000;
 constexpr ACCESS_MASK kDirectoryQuery = 1;
 constexpr LONG kMoreEntries = 0x105;
+// TODO: only obs leaves these, other in-game recorders need another way
 constexpr wchar_t kKeepAlive[] = L"CaptureHook_KeepAlive";
 constexpr const wchar_t* kRecorders[] = {L"obs64.exe", L"obs32.exe", L"obs.exe", L"Streamlabs OBS.exe",
                                          L"Streamlabs Desktop.exe"};

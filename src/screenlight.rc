@@ -6,42 +6,44 @@
 1 ICON "screenlight.ico"
 1 RT_MANIFEST "screenlight.manifest"
 
-IDD_SETTINGS DIALOGEX 0, 0, 300, 322
+IDD_SETTINGS DIALOGEX 0, 0, 300, 338
 STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
 EXSTYLE WS_EX_APPWINDOW
 CAPTION "Screen Light settings"
 FONT 8, "MS Shell Dlg 2"
 BEGIN
-  GROUPBOX        "General", -1, 7, 4, 286, 46
+  GROUPBOX        "General", -1, 7, 4, 286, 62
   AUTOCHECKBOX    "&Start Screen Light with Windows", IDC_STARTUP, 15, 17, 270, 10
   AUTOCHECKBOX    "Show a &notification when a program starts watching", IDC_NOTIFY, 15, 32, 270, 10
+  LTEXT           "&Theme:", IDC_THEME_LABEL, 15, 49, 122, 8
+  COMBOBOX        IDC_THEME, 140, 47, 145, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
 
-  GROUPBOX        "Watch for", -1, 7, 54, 286, 82
-  AUTOCHECKBOX    "Screen &capture: screenshots, recorders and screen sharing", IDC_SCREEN, 15, 67, 270, 10
-  AUTOCHECKBOX    "Simulated &keyboard and mouse input", IDC_INPUT, 15, 81, 270, 10
-  AUTOCHECKBOX    "Programs &listening to the keyboard", IDC_KEYBOARD, 15, 95, 270, 10
-  AUTOCHECKBOX    "&Remote control, screen mirroring and hidden desktops", IDC_REMOTE, 15, 109, 270, 10
-  LTEXT           "", IDC_NEEDS, 15, 123, 270, 8
+  GROUPBOX        "Watch for", -1, 7, 70, 286, 82
+  AUTOCHECKBOX    "Screen &capture: screenshots, recorders and screen sharing", IDC_SCREEN, 15, 83, 270, 10
+  AUTOCHECKBOX    "Simulated &keyboard and mouse input", IDC_INPUT, 15, 97, 270, 10
+  AUTOCHECKBOX    "Programs &listening to the keyboard", IDC_KEYBOARD, 15, 111, 270, 10
+  AUTOCHECKBOX    "&Remote control, screen mirroring and hidden desktops", IDC_REMOTE, 15, 125, 270, 10
+  LTEXT           "", IDC_NEEDS, 15, 139, 270, 8
 
-  GROUPBOX        "Overlay", -1, 7, 140, 286, 50
-  LTEXT           "While a program is &watching, show:", -1, 15, 155, 122, 8
-  COMBOBOX        IDC_OVERLAY, 140, 153, 145, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-  LTEXT           "C&orner:", IDC_CORNER_LABEL, 15, 172, 122, 8
-  COMBOBOX        IDC_CORNER, 140, 170, 145, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+  GROUPBOX        "Overlay", -1, 7, 156, 286, 50
+  LTEXT           "While a program is &watching, show:", -1, 15, 171, 122, 8
+  COMBOBOX        IDC_OVERLAY, 140, 169, 145, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+  LTEXT           "Drag the badge to move it, or its edges to resize it.", IDC_BADGE_HINT, 15, 188, 208, 8
+  PUSHBUTTON      "R&eset", IDC_BADGE_RESET, 229, 185, 56, 14
 
-  GROUPBOX        "Trusted programs", -1, 7, 194, 286, 74
-  LTEXT           "Trusted programs stay in the list, but never turn the light red or notify.", -1, 15, 206, 270, 8
-  LISTBOX         IDC_IGNORED, 15, 218, 208, 42, LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL | WS_BORDER | WS_TABSTOP
-  PUSHBUTTON      "&Add...", IDC_ADD, 229, 218, 56, 14
-  PUSHBUTTON      "Re&move", IDC_REMOVE, 229, 236, 56, 14
+  GROUPBOX        "Trusted programs", -1, 7, 210, 286, 74
+  LTEXT           "Trusted programs stay in the list, but never turn the light red or notify.", -1, 15, 222, 270, 8
+  LISTBOX         IDC_IGNORED, 15, 234, 208, 42, LBS_NOINTEGRALHEIGHT | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL | WS_BORDER | WS_TABSTOP
+  PUSHBUTTON      "&Add...", IDC_ADD, 229, 234, 56, 14
+  PUSHBUTTON      "Re&move", IDC_REMOVE, 229, 252, 56, 14
 
-  GROUPBOX        "Full detection", -1, 7, 272, 286, 30
-  LTEXT           "", IDC_SERVICE_TEXT, 15, 286, 186, 8
-  PUSHBUTTON      "", IDC_SERVICE, 205, 283, 80, 14
+  GROUPBOX        "Full detection", -1, 7, 288, 286, 30
+  LTEXT           "", IDC_SERVICE_TEXT, 15, 302, 186, 8
+  PUSHBUTTON      "", IDC_SERVICE, 205, 299, 80, 14
 
-  LTEXT           "", IDC_ABOUT, 9, 309, 170, 8, SS_NOPREFIX
-  DEFPUSHBUTTON   "OK", IDOK, 189, 306, 50, 14
-  PUSHBUTTON      "Cancel", IDCANCEL, 243, 306, 50, 14
+  LTEXT           "", IDC_ABOUT, 9, 325, 170, 8, SS_NOPREFIX
+  DEFPUSHBUTTON   "OK", IDOK, 189, 322, 50, 14
+  PUSHBUTTON      "Cancel", IDCANCEL, 243, 322, 50, 14
 END
 
 VS_VERSION_INFO VERSIONINFO

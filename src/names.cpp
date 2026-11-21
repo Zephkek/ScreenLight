@@ -43,6 +43,20 @@ std::vector<char> file_bytes(const std::wstring& path) {
   return bytes;
 }
 
+bool script_host(const std::wstring& path) {
+  constexpr const wchar_t* kHosts[] = {L"powershell.exe", L"powershell_ise.exe", L"pwsh.exe",    L"wscript.exe",
+                                       L"cscript.exe",    L"mshta.exe",          L"rundll32.exe", L"regsvr32.exe",
+                                       L"msbuild.exe",    L"installutil.exe",    L"regasm.exe",   L"regsvcs.exe",
+                                       L"dotnet.exe",     L"java.exe",           L"javaw.exe",    L"node.exe",
+                                       L"python.exe",     L"pythonw.exe"};
+  const size_t slash = path.find_last_of(L"\\/");
+  const wchar_t* name = path.c_str() + (slash == std::wstring::npos ? 0 : slash + 1);
+  for (const wchar_t* host : kHosts) {
+    if (_wcsicmp(name, host) == 0) return true;
+  }
+  return false;
+}
+
 bool process_gone(DWORD pid) {
   HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid);
   if (!process) return GetLastError() == ERROR_INVALID_PARAMETER;

@@ -47,6 +47,7 @@ constexpr ULONG kKeyboardPage = 1;
 constexpr ULONG kKeyboardUsage = 6;
 constexpr ULONG kKeypadUsage = 7;
 constexpr ULONG kBackgroundPolls = 32;
+// win32k logs from 1 call/ms and games poll that fast too
 constexpr ULONGLONG kPollsPerMs = 4;
 constexpr ULONGLONG kPollShowsForMs = 10000;
 constexpr wchar_t kListens[] = L"listens to the keyboard";
@@ -160,7 +161,7 @@ bool windows_component(DWORD pid) {
   if (!length || length >= ARRAYSIZE(windows)) return false;
   const std::wstring folder = std::wstring(windows, length) + L"\\";
   const std::wstring path = process_path(pid);
-  return path.size() > folder.size() && _wcsnicmp(path.c_str(), folder.c_str(), folder.size()) == 0;
+  return path.size() > folder.size() && _wcsnicmp(path.c_str(), folder.c_str(), folder.size()) == 0 && !script_host(path);
 }
 
 bool trusted_listener(DWORD pid) { return windows_component(pid) || own_copy(pid); }
@@ -200,6 +201,7 @@ void keyboard_listener(PEVENT_RECORD record) {
       injection(pid, record->EventHeader.EventDescriptor.Id);
       return;
     case kHookEvent: {
+      // TODO: hooks set before the trace started never show up here
       ULONG type = 0, result = 0;
       if (!uint_property(record, L"FilterType", &type) || !uint_property(record, L"ReturnValue", &result) || !result) return;
       if (type == kJournalPlayback) {
