@@ -24,8 +24,8 @@ constexpr LONG kInfoLengthMismatch = LONG(0xC0000004);
 constexpr ULONGLONG kRelistMs = 60000;
 constexpr ULONGLONG kFirstLookMs = 2000;
 constexpr ULONGLONG kLookAgainMs = 10000;
-constexpr wchar_t kCaptures[] = L"captures the screen or a window";
-constexpr wchar_t kMayCapture[] = L"may be capturing the screen or a window";
+constexpr wchar_t kCaptures[] = L"captures the screen";
+constexpr wchar_t kMayCapture[] = L"may be capturing the screen";
 
 using QueryObjectFn = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
 using QueryProcessFn = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
@@ -168,7 +168,7 @@ bool has_module(HANDLE process, const wchar_t* wanted) {
   return find_module(process, [wanted](const std::wstring& path) { return _wcsicmp(file_part(path).c_str(), wanted) == 0; });
 }
 
-std::vector<Watcher> look(DWORD session, const std::vector<DWORD>& known) {
+std::vector<Watcher> look(DWORD session, const std::vector<DWORD>& known, bool service_side) {
   std::vector<Watcher> found;
   const ULONG type = load_nt() ? shared_resource_type() : 0;
   WTS_PROCESS_INFOW* processes = nullptr;
@@ -188,20 +188,22 @@ std::vector<Watcher> look(DWORD session, const std::vector<DWORD>& known) {
     }
     WTSFreeMemory(processes);
   }
-  if (found.empty() && known.empty()) found.push_back({Source::kCapture, 0, L"A program", kCaptures, {}});
+  if (found.empty() && known.empty()) {
+    found.push_back({Source::kCapture, 0, service_side ? L"Protected program" : L"Full detection needed", kCaptures, {}});
+  }
   if (found.size() > 1) {
     for (Watcher& w : found) w.what = kMayCapture;
   }
   return found;
 }
 
-std::vector<Watcher> guess(DWORD session, const std::vector<DWORD>& known) {
+std::vector<Watcher> guess(DWORD session, const std::vector<DWORD>& known, bool service_side) {
   const ULONGLONG now = GetTickCount64();
   Guess& g = g_guesses[session];
   if (!g.since) g.since = now;
   const ULONGLONG every = now - g.since < kLookAgainMs ? kFirstLookMs : kLookAgainMs;
   if (!g.at || now - g.at >= every) {
-    g.found = look(session, known);
+    g.found = look(session, known, service_side);
     g.at = now;
   }
   return g.found;
@@ -215,7 +217,7 @@ std::vector<Watcher> running_captures(DWORD session) {
     g_guesses.erase(session);
     return {};
   }
-  return guess(session, {});
+  return guess(session, {}, false);
 }
 
 void remember_running_captures() {
@@ -237,7 +239,7 @@ std::vector<Watcher> earlier_captures(DWORD session, const std::vector<DWORD>& k
     g_guesses.erase(session);
     return {};
   }
-  return guess(session, known);
+  return guess(session, known, true);
 }
 
 }  // namespace screenlight

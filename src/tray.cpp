@@ -74,13 +74,11 @@ void notify(HWND window, const std::vector<Watcher>& news) {
   std::wstring title, body;
   if (news.size() == 1) {
     title = news[0].name + L" " + news[0].what;
-    if (!news[0].path.empty()) body = L"Location: " + news[0].path + L"\n";
+    body = news[0].path.empty() ? news[0].name : news[0].path;
   } else {
     title = std::to_wstring(news.size()) + L" programs started watching";
     for (size_t i = 0; i < news.size(); ++i) body += (i ? L", " : L"") + news[i].name;
-    body += L".\n";
   }
-  body += L"Click for more information.";
   NOTIFYICONDATAW data = tray_data(window);
   data.uFlags = NIF_INFO | NIF_REALTIME;
   data.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON | NIIF_RESPECT_QUIET_TIME | NIIF_NOSOUND;
@@ -90,10 +88,10 @@ void notify(HWND window, const std::vector<Watcher>& news) {
   Shell_NotifyIconW(NIM_MODIFY, &data);
 }
 
-void notify_new(HWND window, const std::vector<Watcher>& watchers, const std::vector<Watcher>& fresh) {
+void notify_new(HWND window, const std::vector<Watcher>& watchers) {
   const ULONGLONG now = GetTickCount64();
   std::vector<Watcher> news;
-  for (const Watcher& w : fresh) {
+  for (const Watcher& w : watchers) {
     const auto last = g_last_seen.find(key_of(w));
     const bool quiet = last == g_last_seen.end() || now - last->second > kNotifyAgainMs;
     const bool listed = std::any_of(news.begin(), news.end(),
@@ -107,15 +105,12 @@ void notify_new(HWND window, const std::vector<Watcher>& watchers, const std::ve
 
 void refresh(HWND window) {
   const std::vector<Watcher> watchers = collect_watchers();
-  const std::vector<Watcher> fresh = track(watchers);
-  std::vector<Watcher> active, news;
+  track(watchers);
+  std::vector<Watcher> active;
   for (const Watcher& w : watchers) {
     if (!ignored(w) && !w.possible) active.push_back(w);
   }
-  for (const Watcher& w : fresh) {
-    if (!ignored(w) && !w.possible) news.push_back(w);
-  }
-  notify_new(window, active, news);
+  notify_new(window, active);
   show_overlay(active);
   update_flyout();
   const bool lit = !active.empty();
@@ -260,6 +255,7 @@ int run_tray(HINSTANCE instance, bool show) {
   add_icon(window);
   WTSRegisterSessionNotification(window, NOTIFY_FOR_ALL_SESSIONS);
   if (settings().watch_input) start_input_watch(window);
+  watch_publishers(window);
   refresh(window);
   SetTimer(window, kPollTimer, 1000, nullptr);
   if (show) {

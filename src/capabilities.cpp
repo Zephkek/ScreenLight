@@ -1,5 +1,7 @@
 #include <windows.h>
 #include <cfgmgr32.h>
+#include <devpropdef.h>
+#include <intrin.h>
 #include <setupapi.h>
 
 #include <algorithm>
@@ -40,11 +42,17 @@ constexpr wchar_t kMouseClass[] = L"{4D36E96F-E325-11CE-BFC1-08002BE10318}";
 constexpr GUID kKeyboardGuid = {0x4d36e96b, 0xe325, 0x11ce, {0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18}};
 constexpr GUID kMouseGuid = {0x4d36e96f, 0xe325, 0x11ce, {0xbf, 0xc1, 0x08, 0x00, 0x2b, 0xe1, 0x03, 0x18}};
 constexpr ULONGLONG kLookAgainMs = 60000;
+constexpr ULONG kCodeIntegrityInformation = 103;
+constexpr ULONG kKernelDebuggerInformation = 35;
+constexpr ULONG kTestSigning = 0x2;
+constexpr ULONG kDebugMode = 0x80;
+constexpr DEVPROPKEY kDeviceStack = {{0x540b947e, 0x8b40, 0x45bc, {0xa8, 0xa2, 0x6a, 0x0b, 0x89, 0x4c, 0xbd, 0xa2}}, 14};
 constexpr ULONGLONG kPruneEveryMs = 5000;
 
 std::map<DWORD, Hooked> g_hooked;
 ULONGLONG g_pruned_at;
 std::vector<Watcher> g_drivers;
+std::vector<std::wstring> g_host_makers;
 bool g_drivers_stale = true;
 
 std::vector<std::wstring> split_multi(const std::vector<wchar_t>& text) {
@@ -88,6 +96,28 @@ std::wstring driver_path(const std::wstring& service) {
   return path;
 }
 
+std::wstring version_string(const std::wstring& path, const wchar_t* field) {
+  DWORD ignored = 0;
+  const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &ignored);
+  if (!size) return std::wstring();
+  std::vector<BYTE> data(size);
+  if (!GetFileVersionInfoW(path.c_str(), 0, size, data.data())) return std::wstring();
+  struct Translation {
+    WORD language, codepage;
+  }* translations = nullptr;
+  UINT bytes = 0;
+  if (!VerQueryValueW(data.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void**>(&translations), &bytes) ||
+      bytes < sizeof(Translation)) {
+    return std::wstring();
+  }
+  wchar_t query[96];
+  swprintf(query, ARRAYSIZE(query), L"\\StringFileInfo\\%04x%04x\\%ls", translations[0].language, translations[0].codepage, field);
+  wchar_t* text = nullptr;
+  UINT length = 0;
+  if (!VerQueryValueW(data.data(), query, reinterpret_cast<void**>(&text), &length) || !text) return std::wstring();
+  return text;
+}
+
 std::wstring file_description(const std::wstring& path, const std::wstring& fallback) {
   DWORD ignored = 0;
   const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &ignored);
@@ -113,13 +143,19 @@ std::wstring file_description(const std::wstring& path, const std::wstring& fall
 
 void add_filter(const std::wstring& filter, bool keyboard, std::vector<Watcher>* found) {
   if (inbox(filter)) return;
-  const bool listed = std::any_of(found->begin(), found->end(), [&](const Watcher& w) { return w.name == filter || w.path == driver_path(filter); });
-  if (listed) return;
   const std::wstring path = driver_path(filter);
+  const std::wstring maker = version_string(path, L"CompanyName");
+  if (maker.find(L"Microsoft") != std::wstring::npos) return;
+  for (const std::wstring& host : g_host_makers) {
+    if (maker.find(host) != std::wstring::npos) return;
+  }
+  const bool listed = std::any_of(found->begin(), found->end(), [&](const Watcher& w) {
+    return w.name == filter || (!path.empty() && _wcsicmp(w.path.c_str(), path.c_str()) == 0);
+  });
+  if (listed) return;
   const std::wstring label = file_description(path, filter);
   found->push_back({Source::kInput, 0, label,
-                    keyboard ? L"is a driver between your keyboard and Windows, it can read and fake keys"
-                             : L"is a driver between your mouse and Windows, it can fake clicks",
+                    keyboard ? L"keyboard driver, can read and fake keys" : L"mouse driver, can fake clicks",
                     path, 0, true});
 }
 
@@ -157,6 +193,20 @@ void scan_devices(const GUID& klass, bool keyboard, std::vector<Watcher>* found)
   SP_DEVINFO_DATA device{};
   device.cbSize = sizeof device;
   for (DWORD i = 0; SetupDiEnumDeviceInfo(devices, i, &device); ++i) {
+    DEVPROPTYPE type = 0;
+    DWORD needed = 0;
+    SetupDiGetDevicePropertyW(devices, &device, &kDeviceStack, &type, nullptr, 0, &needed, 0);
+    if (needed) {
+      std::vector<wchar_t> stack(needed / sizeof(wchar_t) + 2);
+      if (SetupDiGetDevicePropertyW(devices, &device, &kDeviceStack, &type, reinterpret_cast<BYTE*>(stack.data()),
+                                    needed, nullptr, 0)) {
+        for (std::wstring driver : split_multi(stack)) {
+          const size_t slash = driver.find_last_of(L'\\');
+          if (slash != std::wstring::npos) driver.erase(0, slash + 1);
+          add_filter(driver, keyboard, found);
+        }
+      }
+    }
     for (DWORD property : {DWORD(SPDRP_UPPERFILTERS), DWORD(SPDRP_LOWERFILTERS)}) {
       std::vector<wchar_t> multi;
       if (!device_property(devices, &device, property, &multi).empty()) {
@@ -171,15 +221,79 @@ void scan_devices(const GUID& klass, bool keyboard, std::vector<Watcher>* found)
     if (name.empty()) name = device_property(devices, &device, SPDRP_DEVICEDESC);
     if (name.empty()) name = keyboard ? L"Virtual keyboard" : L"Virtual mouse";
     found->push_back({Source::kInput, 0, name,
-                      keyboard ? L"is a virtual keyboard, a program can type with it as if it were real"
-                               : L"is a virtual mouse, a program can click with it as if it were real",
+                      keyboard ? L"virtual keyboard" : L"virtual mouse",
                       {}, 0, true});
   }
   SetupDiDestroyDeviceInfoList(devices);
 }
 
+void look_at_boot() {
+  using QueryFn = LONG(WINAPI*)(ULONG, void*, ULONG, ULONG*);
+  static const auto query =
+      reinterpret_cast<QueryFn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQuerySystemInformation"));
+  if (!query) return;
+  struct {
+    ULONG length;
+    ULONG options;
+  } integrity = {sizeof integrity, 0};
+  struct {
+    BOOLEAN enabled;
+    BOOLEAN absent;
+  } debugger = {};
+  if (query(kCodeIntegrityInformation, &integrity, sizeof integrity, nullptr) < 0) integrity.options = 0;
+  if (query(kKernelDebuggerInformation, &debugger, sizeof debugger, nullptr) < 0) debugger.enabled = FALSE;
+  if (integrity.options & kTestSigning) {
+    g_drivers.push_back({Source::kRemote, 0, L"Test mode", L"unsigned drivers can load", {}, 0, true});
+  }
+  if (debugger.enabled || (integrity.options & kDebugMode)) {
+    g_drivers.push_back({Source::kRemote, 0, L"Kernel debugging", L"a debugger can take over this PC", {}, 0, true});
+  }
+}
+
+void look_at_machine() {
+  int info[4] = {};
+  __cpuid(info, 1);
+  if (!(info[2] & (1 << 31))) return;
+  __cpuid(info, 0x40000000);
+  char vendor[13] = {};
+  memcpy(vendor, &info[1], 4);
+  memcpy(vendor + 4, &info[2], 4);
+  memcpy(vendor + 8, &info[3], 4);
+  if (strcmp(vendor, "Microsoft Hv") == 0) {
+    __cpuid(info, 0x40000003);
+    if (info[1] & 1) return;
+  }
+  struct Known {
+    const char* vendor;
+    const wchar_t* name;
+    const wchar_t* makers[2];
+  };
+  constexpr Known kVendors[] = {{"VMwareVMware", L"VMware", {L"VMware", L"Broadcom"}},
+                                {"VBoxVBoxVBox", L"VirtualBox", {L"Oracle", L"innotek"}},
+                                {"Microsoft Hv", L"Hyper-V", {}},
+                                {"KVMKVMKVM", L"KVM", {L"Red Hat", L"QEMU"}},
+                                {"XenVMMXenVMM", L"Xen", {L"Citrix", L"XenSource"}},
+                                {"prl hyperv  ", L"Parallels", {L"Parallels"}},
+                                {" lrpepyh  vr", L"Parallels", {L"Parallels"}},
+                                {"TCGTCGTCGTCG", L"QEMU", {L"Red Hat", L"QEMU"}},
+                                {"ACRNACRNACRN", L"ACRN", {}},
+                                {"bhyve bhyve ", L"bhyve", {}}};
+  std::wstring name = L"Virtual machine";
+  for (const Known& known : kVendors) {
+    if (strcmp(vendor, known.vendor) != 0) continue;
+    name = known.name;
+    for (const wchar_t* maker : known.makers) {
+      if (maker) g_host_makers.push_back(maker);
+    }
+  }
+  g_drivers.push_back({Source::kRemote, 0, name, L"hosts this PC, sees everything", {}, 0, true});
+}
+
 void look_at_drivers() {
   g_drivers.clear();
+  g_host_makers.clear();
+  look_at_boot();
+  look_at_machine();
   for (const wchar_t* value : {L"UpperFilters", L"LowerFilters"}) {
     for (const std::wstring& filter : class_filters(kKeyboardClass, value)) add_filter(filter, true, &g_drivers);
     for (const std::wstring& filter : class_filters(kMouseClass, value)) add_filter(filter, false, &g_drivers);
@@ -208,7 +322,7 @@ void look_at_foreground() {
       if (_wcsicmp(name.c_str(), overlay.dll) != 0) continue;
       const bool listed = std::any_of(entry.overlays.begin(), entry.overlays.end(),
                                       [&](const Watcher& w) { return w.name == overlay.label; });
-      if (!listed) entry.overlays.push_back({Source::kCapture, 0, overlay.label, L"is inside " + game + L" and can record it", path, 0, true});
+      if (!listed) entry.overlays.push_back({Source::kCapture, 0, overlay.label, L"can record " + game, path, 0, true});
     }
     return false;
   });

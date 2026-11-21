@@ -147,7 +147,7 @@ void record(DWORD pid, const std::wstring& name, const std::wstring& path, Kind 
     auto it = std::find_if(g_senders.begin(), g_senders.end(), [pid](const Sender& s) { return s.pid == pid; });
     if (it == g_senders.end()) {
       std::wstring label = name;
-      if (label.empty()) label = pid ? process_name(pid) : L"Unknown program";
+      if (label.empty()) label = process_name(pid);
       it = g_senders.insert(g_senders.end(), Sender{pid, label, path.empty() && pid ? process_path(pid) : path});
       fresh = true;
     }
@@ -175,7 +175,30 @@ void injected(Kind kind) {
   } else {
     pid = service_sender(&name, &path);
   }
-  record(pid, name, path, kind, now);
+  if (pid) {
+    record(pid, name, path, kind, now);
+  } else if (!service_running()) {
+    record(0, L"Full detection needed", std::wstring(), kind, now);
+  } else if (kind == Kind::kKeys) {
+    record(0, L"Protected program", std::wstring(), kind, now);
+  }
+}
+
+DWORD g_pointer_pid;
+std::wstring g_pointer_name, g_pointer_path;
+ULONGLONG g_pointer_at;
+
+void pointer_injected(Kind kind) {
+  const ULONGLONG now = GetTickCount64();
+  if (!service_running()) {
+    record(0, L"Full detection needed", std::wstring(), kind, now);
+    return;
+  }
+  if (!g_pointer_at || now - g_pointer_at > 1000) {
+    g_pointer_pid = service_pointer(&g_pointer_name, &g_pointer_path);
+    g_pointer_at = now;
+  }
+  if (g_pointer_pid) record(g_pointer_pid, g_pointer_name, g_pointer_path, kind, now);
 }
 
 constexpr ULONG_PTR kPointerSignature = 0xFF515700;
@@ -186,7 +209,7 @@ LRESULT CALLBACK mouse_hook(int code, WPARAM wparam, LPARAM lparam) {
   const auto* info = reinterpret_cast<const MSLLHOOKSTRUCT*>(lparam);
   if (code == HC_ACTION && (info->flags & LLMHF_INJECTED)) {
     if ((info->dwExtraInfo & kSignatureMask) == kPointerSignature) {
-      record(0, L"A program", std::wstring(), (info->dwExtraInfo & kTouchBit) ? Kind::kTouch : Kind::kPen, GetTickCount64());
+      pointer_injected((info->dwExtraInfo & kTouchBit) ? Kind::kTouch : Kind::kPen);
     } else {
       injected(Kind::kMouse);
     }

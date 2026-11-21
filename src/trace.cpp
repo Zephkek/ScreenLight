@@ -4,10 +4,12 @@
 #include <evntrace.h>
 #include <tdh.h>
 
+#include <algorithm>
 #include <atomic>
 #include <climits>
 #include <cwchar>
 #include <map>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -34,11 +36,18 @@ constexpr USHORT kUpdateEvent = 1;
 constexpr USHORT kRawInputEvent = 1001;
 constexpr USHORT kHookEvent = 1002;
 constexpr USHORT kKeyStateEvent = 1003;
-constexpr USHORT kWin32kEvents[] = {kUpdateEvent, kRawInputEvent, kHookEvent, kKeyStateEvent};
+constexpr USHORT kInjectMouseEvent = 81;
+constexpr USHORT kTouchInjectionEvent = 129;
+constexpr USHORT kPointerDeviceEvent = 196;
+constexpr USHORT kWin32kEvents[] = {kUpdateEvent, kRawInputEvent, kHookEvent, kKeyStateEvent,
+                                    kInjectMouseEvent, kTouchInjectionEvent, kPointerDeviceEvent};
+constexpr ULONGLONG kInjectionKeyword = 0x800000;
+constexpr ULONGLONG kInjectShowsForMs = 3000;
 constexpr ULONG kKeyboardPage = 1;
 constexpr ULONG kKeyboardUsage = 6;
 constexpr ULONG kKeypadUsage = 7;
 constexpr ULONG kBackgroundPolls = 32;
+constexpr ULONGLONG kPollsPerMs = 4;
 constexpr ULONGLONG kPollShowsForMs = 10000;
 constexpr wchar_t kListens[] = L"listens to the keyboard";
 constexpr int kJournalPlayback = 1;
@@ -58,6 +67,17 @@ std::atomic<DWORD> g_calibrating{0};
 std::atomic<ULONGLONG> g_calibrate_until{0};
 std::atomic<ULONG> g_read_code{0};
 std::atomic<bool> g_surface_names_window{false};
+std::atomic<DWORD> g_calibrated{0};
+std::map<DWORD, std::pair<ULONGLONG, bool>> g_copies;
+
+struct Injector {
+  ULONGLONG mouse = 0;
+  ULONGLONG touch = 0;
+};
+
+std::map<DWORD, Injector> g_injectors;
+std::mutex g_pointer_lock;
+std::map<DWORD, std::pair<DWORD, ULONGLONG>> g_pointer_makers;
 std::vector<BYTE> g_properties;
 TRACEHANDLE g_session;
 TRACEHANDLE g_consumer = INVALID_PROCESSTRACE_HANDLE;
@@ -94,18 +114,13 @@ bool windows_file(DWORD pid, const wchar_t* file) {
   return _wcsicmp(process_path(pid).c_str(), (std::wstring(windows, length) + file).c_str()) == 0;
 }
 
-void screen_update(PEVENT_RECORD record) {
-  ULONG type = 0;
-  if (!uint_property(record, L"Type", &type) || !(type & kSyncRequest)) return;
-  const DWORD pid = record->EventHeader.ProcessId;
-  if (pid == g_calibrating && GetTickCount64() < g_calibrate_until) {
-    g_read_code = type;
-    g_calibrating = 0;
-    return;
-  }
-  if (type == g_read_code && !windows_file(pid, L"\\System32\\consent.exe")) {
-    track_seen(Source::kScreenRead, pid, L"reads the screen", kReadShowsForMs);
-  }
+ULONGLONG process_started(DWORD pid) {
+  HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!process) return 0;
+  FILETIME created{}, exited, kernel, user;
+  const bool ok = GetProcessTimes(process, &created, &exited, &kernel, &user);
+  CloseHandle(process);
+  return ok ? (ULONGLONG(created.dwHighDateTime) << 32) | created.dwLowDateTime : 0;
 }
 
 bool own_copy(DWORD pid) {
@@ -114,8 +129,29 @@ bool own_copy(DWORD pid) {
     const DWORD length = GetModuleFileNameW(nullptr, path, ARRAYSIZE(path));
     return length && length < ARRAYSIZE(path) ? file_bytes(path) : std::vector<char>();
   }();
+  const ULONGLONG started = process_started(pid);
+  if (!started) return false;
+  if (const auto it = g_copies.find(pid); it != g_copies.end() && it->second.first == started) return it->second.second;
   const std::wstring path = process_path(pid);
-  return !self.empty() && !path.empty() && file_bytes(path) == self;
+  const bool same = !self.empty() && !path.empty() && file_bytes(path) == self;
+  if (g_copies.size() > 256) g_copies.clear();
+  g_copies[pid] = {started, same};
+  return same;
+}
+
+void screen_update(PEVENT_RECORD record) {
+  ULONG type = 0;
+  if (!uint_property(record, L"Type", &type) || !(type & kSyncRequest)) return;
+  const DWORD pid = record->EventHeader.ProcessId;
+  const ULONGLONG now = GetTickCount64();
+  if (pid == g_calibrating && now < g_calibrate_until) {
+    g_read_code = type;
+    g_calibrating = 0;
+    g_calibrated = pid;
+    return;
+  }
+  if (type != g_read_code || (pid == g_calibrated && now < g_calibrate_until) || own_copy(pid)) return;
+  if (!windows_file(pid, L"\\System32\\consent.exe")) track_seen(Source::kScreenRead, pid, L"reads the screen", kReadShowsForMs);
 }
 
 bool windows_component(DWORD pid) {
@@ -129,14 +165,45 @@ bool windows_component(DWORD pid) {
 
 bool trusted_listener(DWORD pid) { return windows_component(pid) || own_copy(pid); }
 
+void injection(DWORD pid, USHORT id) {
+  if (pid <= 4 || trusted_listener(pid)) return;
+  if (id == kPointerDeviceEvent) {
+    DWORD session = 0;
+    if (!ProcessIdToSessionId(pid, &session)) return;
+    std::lock_guard<std::mutex> hold(g_pointer_lock);
+    g_pointer_makers[session] = {pid, process_started(pid)};
+    return;
+  }
+  const ULONGLONG now = GetTickCount64();
+  Injector& seen = g_injectors[pid];
+  (id == kInjectMouseEvent ? seen.mouse : seen.touch) = now;
+  std::vector<std::wstring> parts;
+  if (now - seen.mouse < kInjectShowsForMs) parts.push_back(L"mouse input");
+  if (now - seen.touch < kInjectShowsForMs) parts.push_back(L"touch input");
+  std::wstring what = L"simulates";
+  for (size_t i = 0; i < parts.size(); ++i) what += (i == 0 ? L" " : L" and ") + parts[i];
+  if (!parts.empty()) track_seen(Source::kInput, pid, what, kInjectShowsForMs);
+  if (g_injectors.size() > 64) {
+    for (auto it = g_injectors.begin(); it != g_injectors.end();) {
+      const ULONGLONG last = std::max(it->second.mouse, it->second.touch);
+      it = now - last > kInjectShowsForMs ? g_injectors.erase(it) : std::next(it);
+    }
+  }
+}
+
 void keyboard_listener(PEVENT_RECORD record) {
   ULONG pid = record->EventHeader.ProcessId;
   switch (record->EventHeader.EventDescriptor.Id) {
+    case kInjectMouseEvent:
+    case kTouchInjectionEvent:
+    case kPointerDeviceEvent:
+      injection(pid, record->EventHeader.EventDescriptor.Id);
+      return;
     case kHookEvent: {
       ULONG type = 0, result = 0;
       if (!uint_property(record, L"FilterType", &type) || !uint_property(record, L"ReturnValue", &result) || !result) return;
       if (type == kJournalPlayback) {
-        if (!trusted_listener(pid)) track_open(Source::kInput, pid, L"plays back recorded keys and clicks");
+        if (!trusted_listener(pid)) track_open(Source::kInput, pid, L"replays recorded input");
         return;
       }
       if (type != WH_KEYBOARD && type != WH_KEYBOARD_LL && type != WH_JOURNALRECORD) return;
@@ -161,9 +228,13 @@ void keyboard_listener(PEVENT_RECORD record) {
       return;
     }
     case kKeyStateEvent: {
-      ULONG calls = 0;
-      if (!uint_property(record, L"PID", &pid) || !uint_property(record, L"BackgroundCallCount", &calls)) return;
-      if (calls >= kBackgroundPolls && !trusted_listener(pid)) track_seen(Source::kKeyboard, pid, kListens, kPollShowsForMs);
+      ULONG calls = 0, since = 0;
+      if (!uint_property(record, L"PID", &pid) || !uint_property(record, L"BackgroundCallCount", &calls) ||
+          !uint_property(record, L"MsSinceLastKeyEvent", &since)) {
+        return;
+      }
+      const bool sweeping = calls >= kBackgroundPolls && calls >= since * kPollsPerMs;
+      if (sweeping && !trusted_listener(pid)) track_seen(Source::kKeyboard, pid, kListens, kPollShowsForMs);
       return;
     }
   }
@@ -197,7 +268,7 @@ void dwm_api(PEVENT_RECORD record) {
   const DWORD pid = record->EventHeader.ProcessId;
   switch (dwm_call(record)) {
     case DwmCall::kRegisterThumbnail:
-      if (!stop && !windows_file(pid, L"\\explorer.exe")) track_open(Source::kThumbnail, pid, L"shows a live copy of a window");
+      if (!stop && !windows_file(pid, L"\\explorer.exe")) track_open(Source::kThumbnail, pid, L"mirrors a window");
       break;
     case DwmCall::kUnregisterThumbnail:
       if (!stop) track_close(Source::kThumbnail, pid);
@@ -219,7 +290,7 @@ void graphics_capture(PEVENT_RECORD record) {
   ULONG pid = 0;
   if (!uint_property(record, L"processId", &pid) || !pid) return;
   const USHORT id = record->EventHeader.EventDescriptor.Id;
-  if (id == kCaptureStarted) track_open(Source::kCapture, pid, L"captures the screen or a window");
+  if (id == kCaptureStarted) track_open(Source::kCapture, pid, L"captures the screen");
   if (id != kCaptureStopped) return;
   DWORD session = 0;
   if (!tracking(Source::kCapture, pid) && ProcessIdToSessionId(pid, &session)) forget_running_captures(session);
@@ -251,8 +322,8 @@ void enable_win32k() {
     parameters.Version = ENABLE_TRACE_PARAMETERS_VERSION_2;
     parameters.EnableFilterDesc = &descriptor;
     parameters.FilterDescCount = 1;
-    if (EnableTraceEx2(g_session, &kWin32k, EVENT_CONTROL_CODE_ENABLE_PROVIDER, TRACE_LEVEL_INFORMATION, keywords, 0, 0,
-                       &parameters) == ERROR_SUCCESS) {
+    if (EnableTraceEx2(g_session, &kWin32k, EVENT_CONTROL_CODE_ENABLE_PROVIDER, TRACE_LEVEL_VERBOSE,
+                       keywords | kInjectionKeyword, 0, 0, &parameters) == ERROR_SUCCESS) {
       return;
     }
   }
@@ -279,6 +350,17 @@ void WINAPI handle_trace_event(PEVENT_RECORD record) {
   } else if (header.ProviderId == kGraphicsCapture) {
     graphics_capture(record);
   }
+}
+
+DWORD pointer_maker(DWORD session) {
+  std::lock_guard<std::mutex> hold(g_pointer_lock);
+  const auto it = g_pointer_makers.find(session);
+  if (it == g_pointer_makers.end()) return 0;
+  if (process_started(it->second.first) != it->second.second) {
+    g_pointer_makers.erase(it);
+    return 0;
+  }
+  return it->second.first;
 }
 
 void begin_calibration(DWORD pid) {

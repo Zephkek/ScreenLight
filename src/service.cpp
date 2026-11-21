@@ -39,6 +39,7 @@ void WINAPI service_main(DWORD, LPWSTR*) {
   if (!g_status_handle) return;
   g_stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   restore_tracked();
+  remember_drivers();
   start_trace();
   HANDLE pipe = CreateThread(nullptr, 0, pipe_thread, nullptr, 0, nullptr);
   set_state(SERVICE_RUNNING);

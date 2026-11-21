@@ -121,9 +121,9 @@ int active_rows() {
 
 std::wstring status_text() {
   const int active = active_rows();
-  if (active == 0) return L"Nothing is watching your screen or input right now.";
-  if (active == 1) return L"1 program is watching right now.";
-  return std::to_wstring(active) + L" programs are watching right now.";
+  if (active == 0) return L"Nothing is watching";
+  if (active == 1) return L"1 program is watching";
+  return std::to_wstring(active) + L" programs are watching";
 }
 
 bool same_watcher(const Row& row, const Watcher& w) {
@@ -220,14 +220,14 @@ void row_menu(LPARAM where) {
   }
   HMENU menu = CreatePopupMenu();
   if (pid && can_end(pid)) {
-    AppendMenuW(menu, MF_STRING, kEnd, L"End program...");
+    AppendMenuW(menu, MF_STRING, kEnd, L"End...");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   }
   if (!path.empty()) {
     AppendMenuW(menu, MF_STRING, kOpenLocation, L"Open file location");
     AppendMenuW(menu, MF_STRING, kProperties, L"Properties");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | (was_ignored ? MF_CHECKED : MF_UNCHECKED), kIgnore, L"Trust this program");
+    AppendMenuW(menu, MF_STRING | (was_ignored ? MF_CHECKED : MF_UNCHECKED), kIgnore, L"Trust");
     SetMenuDefaultItem(menu, kOpenLocation, FALSE);
   }
   if (std::any_of(g_rows.begin(), g_rows.end(), [](const Row& r) { return !r.active; })) {
@@ -362,7 +362,7 @@ LRESULT notify(HWND window, NMHDR* header) {
     case LVN_GETEMPTYMARKUP: {
       auto* markup = reinterpret_cast<NMLVEMPTYMARKUP*>(header);
       markup->dwFlags = EMF_CENTERED;
-      lstrcpynW(markup->szMarkup, L"Programs that watch your screen or input will show up here.",
+      lstrcpynW(markup->szMarkup, L"Nothing yet",
                 ARRAYSIZE(markup->szMarkup));
       return TRUE;
     }
@@ -463,8 +463,7 @@ void create(HINSTANCE instance) {
   g_status = CreateWindowExW(0, WC_STATICW, L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, g_window,
                              nullptr, instance, nullptr);
   g_hint = CreateWindowExW(0, WC_LINK,
-                           L"Screen Light can't see screen recorders, screenshots or keyboard listeners yet. "
-                           L"<a>Turn on full detection</a>",
+                           L"Full detection is off. <a>Turn on</a>",
                            WS_CHILD | WS_TABSTOP, 0, 0, 0, 0, g_window, nullptr, instance, nullptr);
   g_settings = CreateWindowExW(0, WC_LINK, L"<a>Settings</a>", WS_CHILD | WS_VISIBLE | WS_TABSTOP | LWS_RIGHT, 0, 0, 0, 0,
                                g_window, nullptr, instance, nullptr);
@@ -524,7 +523,7 @@ std::vector<Watcher> track(const std::vector<Watcher>& watchers) {
     changed = true;
   }
   for (Row& row : g_rows) {
-    const bool skip = ignored_path(row.path);
+    const bool skip = trusted(row.source, row.path);
     if (row.ignored != skip) {
       row.ignored = skip;
       changed = true;
@@ -560,9 +559,7 @@ void offer_service() {
   config.dwFlags |= TDF_USE_HICON_MAIN;
   config.pszMainInstruction = L"Turn on full detection?";
   config.pszContent =
-      L"Screen Light needs its helper service to see screen recorders like OBS, screenshots, the magnifier and "
-      L"programs that listen to your keyboard. Windows asks for permission once, then the helper starts with Windows. "
-      L"You can turn it off in Settings.";
+      L"Needed to see screen recorders, screenshots and keyloggers.";
   config.cButtons = ARRAYSIZE(buttons);
   config.pButtons = buttons;
   config.nDefaultButton = kTurnOnButton;

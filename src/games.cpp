@@ -98,9 +98,9 @@ std::vector<Watcher> game_captures() {
   for (DWORD game : games) {
     const std::wstring name = process_name(game);
     if (g_recorder) {
-      g_found.push_back({Source::kCapture, g_recorder, process_name(g_recorder), L"records the game " + name, process_path(g_recorder)});
+      g_found.push_back({Source::kCapture, g_recorder, process_name(g_recorder), L"records " + name, process_path(g_recorder)});
     } else {
-      g_found.push_back({Source::kCapture, game, name, L"is being recorded by OBS", process_path(game)});
+      g_found.push_back({Source::kCapture, game, name, L"recorded by OBS", process_path(game)});
     }
   }
   return g_found;

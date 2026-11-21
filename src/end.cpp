@@ -62,8 +62,8 @@ HRESULT CALLBACK dialog_events(HWND dialog, UINT message, WPARAM, LPARAM, LONG_P
 
 bool confirm(HWND owner, const std::wstring& name, bool elevate) {
   const std::wstring title = L"End " + name + L"?";
-  const std::wstring body = name + L" closes right away. Anything it hasn't saved is lost.";
-  TASKDIALOG_BUTTON buttons[] = {{kEndButton, L"End program"}};
+  const std::wstring body = L"Unsaved work in it will be lost.";
+  TASKDIALOG_BUTTON buttons[] = {{kEndButton, L"End"}};
   TASKDIALOGCONFIG config{};
   config.cbSize = sizeof config;
   config.hwndParent = owner;
@@ -83,9 +83,8 @@ bool confirm(HWND owner, const std::wstring& name, bool elevate) {
 }
 
 void refused(HWND owner, const std::wstring& name) {
-  const std::wstring title = L"Screen Light couldn't end " + name;
-  TaskDialog(owner, nullptr, L"Screen Light", title.c_str(), L"Windows protects this program, so it can only be ended from its own settings or by uninstalling it.",
-             TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
+  const std::wstring title = L"Can't end " + name;
+  TaskDialog(owner, nullptr, L"Screen Light", title.c_str(), L"Windows protects it.", TDCBF_CLOSE_BUTTON, TD_ERROR_ICON, nullptr);
 }
 
 bool in_folder(const std::wstring& path, const wchar_t* folder, UINT length) {

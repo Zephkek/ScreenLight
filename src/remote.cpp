@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <tlhelp32.h>
 #include <wtsapi32.h>
 
 #include <string>
@@ -42,12 +43,32 @@ void virtual_screens(std::vector<Watcher>* found) {
     name.header.id = path[i].targetInfo.id;
     std::wstring label = DisplayConfigGetDeviceInfo(&name.header) == ERROR_SUCCESS ? name.monitorFriendlyDeviceName : L"";
     if (technology == kMiracast) {
-      found->push_back({Source::kRemote, 0, label.empty() ? L"Wireless display" : label, L"shows your screen on another device", {}});
+      found->push_back({Source::kRemote, 0, label.empty() ? L"Wireless display" : label, L"casts the screen", {}});
     } else {
       found->push_back({Source::kRemote, 0, label.empty() ? L"Virtual screen" : label,
-                        L"is a virtual screen, the program behind it can stream what is on it", {}});
+                        L"virtual display", {}});
     }
   }
+}
+
+Watcher controller() {
+  DWORD session = 0;
+  ProcessIdToSessionId(GetCurrentProcessId(), &session);
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot != INVALID_HANDLE_VALUE) {
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof entry;
+    for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry)) {
+      DWORD owner = 0;
+      if (_wcsicmp(entry.szExeFile, L"RdpSa.exe") == 0 && ProcessIdToSessionId(entry.th32ProcessID, &owner) && owner == session) {
+        CloseHandle(snapshot);
+        return {Source::kRemote, entry.th32ProcessID, L"Remote desktop", L"controls this PC remotely",
+                process_path(entry.th32ProcessID)};
+      }
+    }
+    CloseHandle(snapshot);
+  }
+  return {Source::kRemote, 0, L"Remote desktop", L"controls this PC remotely", {}};
 }
 
 std::vector<Watcher> g_slow;
@@ -90,7 +111,17 @@ std::vector<Watcher> remote_viewers() {
     g_slow_stale = false;
   }
   std::vector<Watcher> found = g_slow;
-  if (GetSystemMetrics(kRemoteControl)) found.push_back({Source::kRemote, 0, L"Someone", L"controls this session remotely", {}});
+  static Watcher remote;
+  static ULONGLONG remote_at;
+  if (GetSystemMetrics(kRemoteControl)) {
+    if (!remote_at || now - remote_at > kSlowEveryMs) {
+      remote = controller();
+      remote_at = now;
+    }
+    found.push_back(remote);
+  } else {
+    remote_at = 0;
+  }
   return found;
 }
 

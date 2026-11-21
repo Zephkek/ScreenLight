@@ -44,6 +44,7 @@ struct Settings {
   int overlay = kOverlayOff;
   int corner = 0;
   std::vector<std::wstring> ignored;
+  std::vector<std::wstring> distrusted;
 };
 
 const Settings& settings();
@@ -51,6 +52,9 @@ void save_settings(const Settings& s);
 bool portable();
 bool watched(const Watcher& w);
 bool ignored(const Watcher& w);
+bool trusted(Source source, const std::wstring& path);
+bool known_publisher(const std::wstring& path);
+void watch_publishers(HWND notify);
 bool ignored_path(const std::wstring& path);
 void ignore_program(const std::wstring& path, bool on);
 bool starts_with_windows();
@@ -66,6 +70,8 @@ void displays_changed();
 std::vector<Watcher> input_senders();
 std::vector<Watcher> game_captures();
 std::vector<Watcher> possible_watchers();
+std::vector<Watcher> system_watchers(DWORD session);
+void remember_drivers();
 void devices_changed();
 std::vector<Watcher> running_captures(DWORD session);
 void remember_running_captures();
@@ -90,6 +96,8 @@ void flush_trace();
 void stop_trace();
 void WINAPI handle_trace_event(struct _EVENT_RECORD* record);
 void begin_calibration(DWORD pid);
+DWORD pointer_maker(DWORD session);
+DWORD service_pointer(std::wstring* name, std::wstring* path);
 ULONG read_code();
 
 void serve_pipe(HANDLE stop);
