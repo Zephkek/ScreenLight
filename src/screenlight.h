@@ -61,6 +61,11 @@ std::vector<Watcher> remote_viewers();
 void remote_changed();
 void displays_changed();
 std::vector<Watcher> input_senders();
+std::vector<Watcher> game_captures();
+std::vector<Watcher> running_captures(DWORD session);
+void remember_running_captures();
+void forget_running_captures(DWORD session);
+std::vector<Watcher> earlier_captures(DWORD session, const std::vector<DWORD>& known);
 std::vector<Watcher> collect_watchers();
 
 void start_input_watch(HWND notify);

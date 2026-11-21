@@ -43,7 +43,13 @@ std::wstring answer(HANDLE pipe, const std::wstring& request) {
     return reply;
   }
   if (request != L"list") return reply;
-  for (const Watcher& w : tracked(session)) {
+  std::vector<Watcher> list = tracked(session);
+  std::vector<DWORD> known;
+  for (const Watcher& w : list) {
+    if (w.source == Source::kCapture) known.push_back(w.pid);
+  }
+  for (Watcher& w : earlier_captures(session, known)) list.push_back(std::move(w));
+  for (const Watcher& w : list) {
     reply += L"\n" + std::to_wstring(int(w.source)) + L"\t" + std::to_wstring(w.pid) + L"\t" + w.name + L"\t" + w.what + L"\t" + w.path + L"\t" + std::to_wstring(w.window);
   }
   return reply;

@@ -70,7 +70,7 @@ using QueryThreadFn = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
 
 QuerySystemFn g_query_system;
 QueryThreadFn g_query_thread;
-USHORT g_send_input;
+std::vector<USHORT> g_inject_calls;
 HWND g_notify;
 HANDLE g_thread;
 DWORD g_thread_id;
@@ -98,32 +98,40 @@ const uint8_t* stub_called_from(const uint8_t* code, HMODULE module) {
   return nullptr;
 }
 
-USHORT send_input_syscall() {
+constexpr const char* kInjectCalls[] = {"NtUserSendInput",          "NtUserInjectKeyboardInput", "NtUserInjectMouseInput",
+                                         "NtUserInjectTouchInput",   "NtUserInjectPointerInput",  "NtUserInjectGenericHidInput",
+                                         "NtUserInjectDeviceInput",  "NtUserInjectGesture",       "NtUserInjectTouchpadAction"};
+
+std::vector<USHORT> inject_syscalls() {
+  std::vector<USHORT> numbers;
   if (HMODULE win32u = LoadLibraryW(L"win32u.dll")) {
-    const auto* code = reinterpret_cast<const uint8_t*>(GetProcAddress(win32u, "NtUserSendInput"));
-    if (code && syscall_stub(code)) return *reinterpret_cast<const uint16_t*>(code + 4);
+    for (const char* name : kInjectCalls) {
+      const auto* code = reinterpret_cast<const uint8_t*>(GetProcAddress(win32u, name));
+      if (code && syscall_stub(code)) numbers.push_back(*reinterpret_cast<const uint16_t*>(code + 4));
+    }
   }
+  if (!numbers.empty()) return numbers;
   HMODULE user32 = GetModuleHandleW(L"user32.dll");
   const auto* code = reinterpret_cast<const uint8_t*>(GetProcAddress(user32, "SendInput"));
-  if (!code) return 0;
-  if (!syscall_stub(code)) code = stub_called_from(code, user32);
-  return code ? *reinterpret_cast<const uint16_t*>(code + 4) : 0;
+  if (code && !syscall_stub(code)) code = stub_called_from(code, user32);
+  if (code) numbers.push_back(*reinterpret_cast<const uint16_t*>(code + 4));
+  return numbers;
 }
 
 bool load_lookup() {
   HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
   g_query_system = reinterpret_cast<QuerySystemFn>(GetProcAddress(ntdll, "NtQuerySystemInformation"));
   g_query_thread = reinterpret_cast<QueryThreadFn>(GetProcAddress(ntdll, "NtQueryInformationThread"));
-  if (g_query_system && g_query_thread) g_send_input = send_input_syscall();
-  return g_send_input != 0;
+  if (g_query_system && g_query_thread) g_inject_calls = inject_syscalls();
+  return !g_inject_calls.empty();
 }
 
 bool in_send_input(DWORD tid) {
   HANDLE thread = OpenThread(THREAD_GET_CONTEXT, FALSE, tid);
   if (!thread) return false;
   LastSyscall call{};
-  const bool inside =
-      g_query_thread(thread, kThreadLastSystemCall, &call, sizeof call, nullptr) >= 0 && call.number == g_send_input;
+  const bool inside = g_query_thread(thread, kThreadLastSystemCall, &call, sizeof call, nullptr) >= 0 &&
+                      std::find(g_inject_calls.begin(), g_inject_calls.end(), call.number) != g_inject_calls.end();
   CloseHandle(thread);
   return inside;
 }

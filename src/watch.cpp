@@ -27,13 +27,23 @@ void append(std::vector<Watcher>* all, std::vector<Watcher> more) {
 std::vector<Watcher> collect_watchers() {
   const Settings& s = settings();
   std::vector<Watcher> all;
-  if (s.watch_screen) append(&all, duplicating_processes());
+  std::vector<Watcher> from_service = service_watchers();
+  if (s.watch_screen) {
+    append(&all, duplicating_processes());
+    append(&all, game_captures());
+    static const DWORD session = [] {
+      DWORD id = 0;
+      ProcessIdToSessionId(GetCurrentProcessId(), &id);
+      return id;
+    }();
+    if (!service_running()) append(&all, running_captures(session));
+  }
   if (s.watch_remote) {
     append(&all, hidden_desktop_processes());
     append(&all, remote_viewers());
   }
   if (s.watch_input) append(&all, input_senders());
-  for (Watcher& w : service_watchers()) {
+  for (Watcher& w : from_service) {
     if (watched(w) && !own_window(w)) all.push_back(std::move(w));
   }
   return all;

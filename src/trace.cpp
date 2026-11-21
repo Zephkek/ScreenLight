@@ -199,7 +199,10 @@ void graphics_capture(PEVENT_RECORD record) {
   if (!uint_property(record, L"processId", &pid) || !pid) return;
   const USHORT id = record->EventHeader.EventDescriptor.Id;
   if (id == kCaptureStarted) track_open(Source::kCapture, pid, L"captures the screen or a window");
-  if (id == kCaptureStopped) track_close(Source::kCapture, pid);
+  if (id != kCaptureStopped) return;
+  DWORD session = 0;
+  if (!tracking(Source::kCapture, pid) && ProcessIdToSessionId(pid, &session)) forget_running_captures(session);
+  track_close(Source::kCapture, pid);
 }
 
 EVENT_TRACE_PROPERTIES* properties() {
@@ -281,6 +284,7 @@ bool start_trace() {
   g_consumer = OpenTraceW(&log);
   if (g_consumer == INVALID_PROCESSTRACE_HANDLE) return false;
   g_thread = CreateThread(nullptr, 0, consume, nullptr, 0, nullptr);
+  remember_running_captures();
   return g_thread != nullptr;
 }
 
