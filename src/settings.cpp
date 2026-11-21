@@ -29,7 +29,7 @@ struct Flag {
 
 constexpr Flag kFlags[] = {{L"Notifications", &Settings::notifications}, {L"WatchScreen", &Settings::watch_screen},
                            {L"WatchInput", &Settings::watch_input},       {L"WatchKeyboard", &Settings::watch_keyboard},
-                           {L"WatchRemote", &Settings::watch_remote}};
+                           {L"WatchRemote", &Settings::watch_remote},     {L"AskedForService", &Settings::asked_service}};
 constexpr Number kNumbers[] = {{L"Overlay", &Settings::overlay}, {L"OverlayCorner", &Settings::corner}};
 
 Settings g_settings;

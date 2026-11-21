@@ -32,5 +32,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
   if (wcscmp(verb, L"--service") == 0) return screenlight::run_service();
   if (wcscmp(verb, L"--install") == 0) return screenlight::install_service();
   if (wcscmp(verb, L"--uninstall") == 0) return screenlight::uninstall_service();
+  if (wcscmp(verb, L"--end") == 0) return argc > 3 ? screenlight::end_elevated(argv[2], argv[3]) : 1;
   return run_tray_once(instance, wcscmp(verb, L"--tray") != 0);
 }

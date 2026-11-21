@@ -34,6 +34,7 @@ bool g_lit;
 bool g_started;
 std::map<std::wstring, ULONGLONG, NoCase> g_last_seen;
 std::wstring g_tip = L"Screen Light - nothing is watching";
+std::vector<Watcher> g_active;
 
 NOTIFYICONDATAW tray_data(HWND window) {
   NOTIFYICONDATAW data{};
@@ -116,6 +117,8 @@ void refresh(HWND window) {
   }
   notify_new(window, active, news);
   show_overlay(active);
+  update_flyout(active);
+  g_active = active;
   const bool lit = !active.empty();
   std::wstring tip = describe(active);
   if (lit == g_lit && tip == g_tip) return;
@@ -161,7 +164,7 @@ void show_menu(HWND window, int x, int y) {
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING | (notifications ? MF_CHECKED : MF_UNCHECKED), kNotify, L"Show notifications");
   AppendMenuW(menu, MF_STRING | (startup ? MF_CHECKED : MF_UNCHECKED), kStartup, L"Start with Windows");
-  AppendMenuW(menu, MF_STRING | (installed ? MF_CHECKED : MF_UNCHECKED), kService, L"Detect screenshots and recorders");
+  AppendMenuW(menu, MF_STRING | (installed ? MF_CHECKED : MF_UNCHECKED), kService, L"Full detection");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING, kSettings, L"Settings...");
   AppendMenuW(menu, MF_STRING, kExit, L"Exit");
@@ -204,6 +207,8 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
           break;
         case NIN_SELECT:
         case NIN_KEYSELECT:
+          toggle_flyout(g_instance, window, g_active);
+          break;
         case NIN_BALLOONUSERCLICK:
           show_window(g_instance, window);
           break;
@@ -288,10 +293,13 @@ int run_tray(HINSTANCE instance, bool show) {
   if (settings().watch_input) start_input_watch(window);
   refresh(window);
   SetTimer(window, kPollTimer, 1000, nullptr);
-  if (show) show_window(instance, window);
+  if (show) {
+    show_window(instance, window);
+    offer_service();
+  }
   MSG msg;
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-    if (settings_message(&msg)) continue;
+    if (settings_message(&msg) || flyout_message(&msg)) continue;
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
   }

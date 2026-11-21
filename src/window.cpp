@@ -37,6 +37,8 @@ constexpr UINT kOpenLocation = 1;
 constexpr UINT kProperties = 2;
 constexpr UINT kIgnore = 3;
 constexpr UINT kClear = 4;
+constexpr UINT kEnd = 5;
+constexpr int kTurnOnButton = 100;
 
 std::vector<Row> g_rows;
 HWND g_window;
@@ -204,6 +206,8 @@ void row_menu(LPARAM where) {
   const int item = ListView_GetNextItem(g_list, -1, LVNI_SELECTED);
   const Row* row = row_at(item);
   const std::wstring path = row ? row->path : std::wstring();
+  const std::wstring name = row ? row->name : std::wstring();
+  const DWORD pid = row && row->active ? row->pid : 0;
   const bool was_ignored = row && row->ignored;
   POINT at{GET_X_LPARAM(where), GET_Y_LPARAM(where)};
   if (where == -1) {
@@ -213,6 +217,10 @@ void row_menu(LPARAM where) {
     ClientToScreen(g_list, &at);
   }
   HMENU menu = CreatePopupMenu();
+  if (pid && can_end(pid)) {
+    AppendMenuW(menu, MF_STRING, kEnd, L"End program");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+  }
   if (!path.empty()) {
     AppendMenuW(menu, MF_STRING, kOpenLocation, L"Open file location");
     AppendMenuW(menu, MF_STRING, kProperties, L"Properties");
@@ -237,6 +245,7 @@ void row_menu(LPARAM where) {
     if (g_tray) PostMessageW(g_tray, kApplyMessage, 0, 0);
   }
   if (picked == kClear) clear_finished();
+  if (picked == kEnd && end_program(g_window, pid, name) && g_tray) PostMessageW(g_tray, kRefreshMessage, 0, 0);
 }
 
 void info_tip(NMLVGETINFOTIPW* tip) {
@@ -452,7 +461,8 @@ void create(HINSTANCE instance) {
   g_status = CreateWindowExW(0, WC_STATICW, L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, g_window,
                              nullptr, instance, nullptr);
   g_hint = CreateWindowExW(0, WC_LINK,
-                           L"<a>Install the service</a> to also see screenshots, screen recorders and the magnifier.",
+                           L"Screen Light can't see screen recorders, screenshots or keyboard listeners yet. "
+                           L"<a>Turn on full detection</a>",
                            WS_CHILD | WS_TABSTOP, 0, 0, 0, 0, g_window, nullptr, instance, nullptr);
   g_settings = CreateWindowExW(0, WC_LINK, L"<a>Settings</a>", WS_CHILD | WS_VISIBLE | WS_TABSTOP | LWS_RIGHT, 0, 0, 0, 0,
                                g_window, nullptr, instance, nullptr);
@@ -525,6 +535,38 @@ std::vector<Watcher> track(const std::vector<Watcher>& watchers) {
   if (g_window && (active_rows() > 0) != g_lit) show_lit(!g_lit);
   if (changed && g_window && IsWindowVisible(g_window)) fill();
   return fresh;
+}
+
+HRESULT CALLBACK offer_events(HWND dialog, UINT message, WPARAM, LPARAM, LONG_PTR) {
+  if (message == TDN_CREATED) SendMessageW(dialog, TDM_SET_BUTTON_ELEVATION_REQUIRED_STATE, kTurnOnButton, TRUE);
+  return S_OK;
+}
+
+void offer_service() {
+  if (settings().asked_service || service_installed() || !g_window) return;
+  Settings s = settings();
+  s.asked_service = true;
+  save_settings(s);
+  TASKDIALOG_BUTTON buttons[] = {{kTurnOnButton, L"Turn on"}, {IDCANCEL, L"Not now"}};
+  TASKDIALOGCONFIG config{};
+  config.cbSize = sizeof config;
+  config.hwndParent = g_window;
+  config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+  config.pszWindowTitle = L"Screen Light";
+  config.hMainIcon = g_icons[0][1];
+  config.dwFlags |= TDF_USE_HICON_MAIN;
+  config.pszMainInstruction = L"Turn on full detection?";
+  config.pszContent =
+      L"Screen Light needs its helper service to see screen recorders like OBS, screenshots, the magnifier and "
+      L"programs that listen to your keyboard. Windows asks for permission once, then the helper starts with Windows.";
+  config.cButtons = ARRAYSIZE(buttons);
+  config.pButtons = buttons;
+  config.nDefaultButton = kTurnOnButton;
+  config.pfCallback = offer_events;
+  int picked = 0;
+  if (SUCCEEDED(TaskDialogIndirect(&config, &picked, nullptr, nullptr)) && picked == kTurnOnButton) {
+    run_elevated(g_window, L"--install");
+  }
 }
 
 void show_window(HINSTANCE instance, HWND tray) {

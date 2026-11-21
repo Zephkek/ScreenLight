@@ -38,6 +38,7 @@ struct Settings {
   bool watch_input = true;
   bool watch_keyboard = true;
   bool watch_remote = true;
+  bool asked_service = false;
   int overlay = kOverlayOff;
   int corner = 0;
   std::vector<std::wstring> ignored;
@@ -102,9 +103,17 @@ void show_overlay(const std::vector<Watcher>& active);
 
 std::vector<Watcher> track(const std::vector<Watcher>& watchers);
 void show_window(HINSTANCE instance, HWND tray);
+void toggle_flyout(HINSTANCE instance, HWND owner, const std::vector<Watcher>& active);
+void update_flyout(const std::vector<Watcher>& active);
+bool flyout_message(MSG* msg);
+bool flyout_visible();
 
 int run_tray(HINSTANCE instance, bool show);
 void run_elevated(HWND window, const wchar_t* verb);
+void offer_service();
+bool can_end(DWORD pid);
+bool end_program(HWND owner, DWORD pid, const std::wstring& name);
+int end_elevated(const wchar_t* pid, const wchar_t* started);
 
 int run_service();
 int install_service();
