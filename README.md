@@ -9,10 +9,7 @@ or your keyboard. So I made Screen Light. It puts an eye in your system tray tha
 your screen, takes screenshots, reads your keys or clicks and types on its own, and it tells you which program it is.
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/panel-dark.png">
-    <img src="docs/panel-light.png" width="321" alt="Screen Light showing three programs that are watching">
-  </picture>
+  <img src="docs/demo.gif" alt="Screen Light naming a screen capture, OBS, a screenshot script, a keylogger and a program moving the mouse">
 </p>
 
 ## Features
@@ -33,6 +30,13 @@ Get the installer or the portable zip from the [Releases](../../releases/latest)
 
 The exe isn't signed yet, so SmartScreen will warn you the first time. Click More info, then Run anyway.
 
+## Is it safe?
+
+It never connects to the internet, and it doesn't save or send anything you type or anything on your screen. To
+notice programs typing on their own, it only checks whether a key press came from a keyboard or from a program, never
+which key it was. Full detection adds a background service because Windows only shares screenshot and keylogger
+events with programs running as admin.
+
 ## Usage
 
 - Install it, and say yes when it asks to turn on full detection. Screenshots and keyloggers can't be seen without it.
@@ -40,6 +44,13 @@ The exe isn't signed yet, so SmartScreen will warn you the first time. Click Mor
   full list.
 - Select a program to end it, or tick Trust if it's something you know, like a chat app's push-to-talk key.
 - Right-click the eye for the settings.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/panel-dark.png">
+    <img src="docs/panel-light.png" width="321" alt="Screen Light showing three programs that are watching">
+  </picture>
+</p>
 
 <p align="center">
   <picture>
