@@ -9,7 +9,10 @@ or your keyboard. So I made Screen Light. It puts an eye in your system tray tha
 your screen, takes screenshots, reads your keys or clicks and types on its own, and it tells you which program it is.
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Screen Light naming a screen capture, OBS, a screenshot script, a keylogger and a program moving the mouse">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/panel-dark.png">
+    <img src="docs/panel-light.png" width="321" alt="Screen Light showing three programs that are watching">
+  </picture>
 </p>
 
 ## Features
@@ -44,13 +47,6 @@ events with programs running as admin.
   full list.
 - Select a program to end it, or tick Trust if it's something you know, like a chat app's push-to-talk key.
 - Right-click the eye for the settings.
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/panel-dark.png">
-    <img src="docs/panel-light.png" width="321" alt="Screen Light showing three programs that are watching">
-  </picture>
-</p>
 
 <p align="center">
   <picture>
