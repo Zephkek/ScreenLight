@@ -36,9 +36,9 @@ The exe isn't signed yet, so SmartScreen will warn you the first time. Click Mor
 ## Is it safe?
 
 It never connects to the internet, and it doesn't save or send anything you type or anything on your screen. To
-notice programs typing on their own, it only checks whether a key press came from a keyboard or from a program, never
-which key it was. Full detection adds a background service because Windows only shares screenshot and keylogger
-events with programs running as admin.
+notice programs typing on their own, it only checks whether a key press came from a keyboard or from a program. The
+only key it looks for is Print Screen, so it can show screenshots taken with it. Full detection adds a background
+service because Windows only shares screenshot and keylogger events with programs running as admin.
 
 ## Usage
 

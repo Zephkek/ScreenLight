@@ -99,7 +99,7 @@ void forget_running_captures(DWORD session);
 std::vector<Watcher> earlier_captures(DWORD session, const std::vector<DWORD>& known);
 std::vector<Watcher> collect_watchers();
 
-void start_input_watch(HWND notify);
+void start_input_watch(HWND notify, bool senders);
 void stop_input_watch();
 bool find_sender(DWORD session, DWORD* pid, DWORD* tid);
 

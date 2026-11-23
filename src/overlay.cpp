@@ -609,7 +609,6 @@ void show_overlay(const std::vector<Watcher>& active) {
     if (w.source == Source::kCapture) capture = &w;
   }
   int kind = g_preview >= 0 ? g_preview : active.empty() ? int(kOverlayOff) : settings().overlay;
-  // screenshots are one moment, so still show the badge when the overlay is otherwise off
   if (kind == kOverlayOff && snapshot) kind = kOverlayBadge;
   if (kind == kOverlayOff) {
     hide_badge();

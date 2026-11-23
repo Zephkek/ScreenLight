@@ -81,6 +81,7 @@ std::vector<USHORT> g_inject_calls;
 HWND g_notify;
 HANDLE g_thread;
 DWORD g_thread_id;
+bool g_senders_on;
 DWORD g_session;
 std::vector<std::pair<DWORD, DWORD>> g_known;
 ULONGLONG g_last_scan;
@@ -230,7 +231,7 @@ LRESULT CALLBACK key_hook(int code, WPARAM wparam, LPARAM lparam) {
         g_notify) {
       PostMessageW(g_notify, kRefreshMessage, 0, 0);
     }
-    if (info->flags & LLKHF_INJECTED) injected(Kind::kKeys);
+    if (g_senders_on && (info->flags & LLKHF_INJECTED)) injected(Kind::kKeys);
   }
   return CallNextHookEx(nullptr, code, wparam, lparam);
 }
@@ -238,7 +239,7 @@ LRESULT CALLBACK key_hook(int code, WPARAM wparam, LPARAM lparam) {
 DWORD WINAPI hook_thread(void*) {
   SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
   HINSTANCE self = GetModuleHandleW(nullptr);
-  HHOOK mouse = SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, self, 0);
+  HHOOK mouse = g_senders_on ? SetWindowsHookExW(WH_MOUSE_LL, mouse_hook, self, 0) : nullptr;
   HHOOK keys = SetWindowsHookExW(WH_KEYBOARD_LL, key_hook, self, 0);
   MSG msg;
   while (GetMessageW(&msg, nullptr, 0, 0) > 0) DispatchMessageW(&msg);
@@ -281,10 +282,12 @@ bool find_sender(DWORD session, DWORD* pid, DWORD* tid) {
   return false;
 }
 
-void start_input_watch(HWND notify) {
-  if (g_thread) return;
+void start_input_watch(HWND notify, bool senders) {
+  if (g_thread && g_senders_on == senders) return;
+  stop_input_watch();
   ProcessIdToSessionId(GetCurrentProcessId(), &g_session);
   g_notify = notify;
+  g_senders_on = senders;
   g_thread = CreateThread(nullptr, 0, hook_thread, nullptr, 0, &g_thread_id);
 }
 

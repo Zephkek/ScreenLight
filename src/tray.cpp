@@ -182,20 +182,6 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
     case WM_TIMER:
       if (wparam == kPollTimer) refresh(window);
       return 0;
-    case WM_INPUT: {
-      RAWINPUT input;
-      UINT size = sizeof input;
-      if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam), RID_INPUT, &input, &size, sizeof(RAWINPUTHEADER)) ==
-              size &&
-          input.header.dwType == RIM_TYPEKEYBOARD) {
-        const RAWKEYBOARD& key = input.data.keyboard;
-        const bool print_screen = key.VKey == VK_SNAPSHOT || (key.VKey == 0xFF && key.MakeCode == 0x37);
-        if (!(key.Flags & RI_KEY_BREAK) && print_screen && note_print_screen()) {
-          PostMessageW(window, kRefreshMessage, 0, 0);
-        }
-      }
-      break;
-    }
     case kRefreshMessage:
       refresh(window);
       return 0;
@@ -219,7 +205,7 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
         retheme_settings();
       }
       if (settings().watch_input || settings().watch_screen) {
-        start_input_watch(window);
+        start_input_watch(window, settings().watch_input);
       } else {
         stop_input_watch();
       }
@@ -291,10 +277,8 @@ int run_tray(HINSTANCE instance, bool show) {
   ChangeWindowMessageFilterEx(window, kShowMessage, MSGFLT_ALLOW, nullptr);
   set_overlay_owner(window);
   add_icon(window);
-  RAWINPUTDEVICE keyboard{0x01, 0x06, RIDEV_INPUTSINK, window};
-  RegisterRawInputDevices(&keyboard, 1, sizeof keyboard);
   WTSRegisterSessionNotification(window, NOTIFY_FOR_ALL_SESSIONS);
-  if (settings().watch_input || settings().watch_screen) start_input_watch(window);
+  if (settings().watch_input || settings().watch_screen) start_input_watch(window, settings().watch_input);
   watch_publishers(window);
   refresh(window);
   SetTimer(window, kPollTimer, 1000, nullptr);
