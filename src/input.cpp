@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -68,6 +69,8 @@ constexpr LONG kInfoLengthMismatch = LONG(0xC0000004);
 constexpr ULONGLONG kScanEveryMs = 200;
 constexpr ULONGLONG kForgetAfterMs = 3000;
 constexpr size_t kKnownThreads = 8;
+constexpr ULONGLONG kSnapshotRepeatMs = 500;
+constexpr ULONGLONG kSnapshotShowsForMs = 5000;
 
 using QuerySystemFn = LONG(NTAPI*)(ULONG, PVOID, ULONG, PULONG);
 using QueryThreadFn = LONG(NTAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
@@ -84,6 +87,8 @@ ULONGLONG g_last_scan;
 std::vector<uint8_t> g_snapshot;
 std::mutex g_lock;
 std::vector<Sender> g_senders;
+std::atomic<ULONGLONG> g_print_screen_at{0};
+std::atomic<ULONGLONG> g_print_screen_seq{0};
 
 bool syscall_stub(const uint8_t* code) {
   return code[0] == 0x4c && code[1] == 0x8b && code[2] == 0xd1 && code[3] == 0xb8;
@@ -219,7 +224,14 @@ LRESULT CALLBACK mouse_hook(int code, WPARAM wparam, LPARAM lparam) {
 }
 
 LRESULT CALLBACK key_hook(int code, WPARAM wparam, LPARAM lparam) {
-  if (code == HC_ACTION && (reinterpret_cast<const KBDLLHOOKSTRUCT*>(lparam)->flags & LLKHF_INJECTED)) injected(Kind::kKeys);
+  if (code == HC_ACTION) {
+    const auto* info = reinterpret_cast<const KBDLLHOOKSTRUCT*>(lparam);
+    if (info->vkCode == VK_SNAPSHOT && (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) && note_print_screen() &&
+        g_notify) {
+      PostMessageW(g_notify, kRefreshMessage, 0, 0);
+    }
+    if (info->flags & LLKHF_INJECTED) injected(Kind::kKeys);
+  }
   return CallNextHookEx(nullptr, code, wparam, lparam);
 }
 
@@ -302,6 +314,23 @@ std::vector<Watcher> input_senders() {
     found.push_back({Source::kInput, s.pid, s.name, what, s.path});
   }
   return found;
+}
+
+bool note_print_screen() {
+  const ULONGLONG now = GetTickCount64();
+  const ULONGLONG last = g_print_screen_at.load();
+  if (last && now - last < kSnapshotRepeatMs) return false;
+  g_print_screen_at = now;
+  ++g_print_screen_seq;
+  return true;
+}
+
+ULONGLONG print_screen_seq() { return g_print_screen_seq.load(); }
+
+std::vector<Watcher> print_screen_watchers() {
+  const ULONGLONG at = g_print_screen_at.load();
+  if (!at || GetTickCount64() - at > kSnapshotShowsForMs) return {};
+  return {{Source::kPrintScreen, 0, L"Print Screen key", L"takes a screenshot", {}}};
 }
 
 }  // namespace screenlight

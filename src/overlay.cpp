@@ -602,7 +602,15 @@ void set_overlay_owner(HWND owner) { g_owner = owner; }
 
 void show_overlay(const std::vector<Watcher>& active) {
   g_active = active;
-  const int kind = g_preview >= 0 ? g_preview : active.empty() ? int(kOverlayOff) : settings().overlay;
+  const Watcher* snapshot = nullptr;
+  const Watcher* capture = nullptr;
+  for (const Watcher& w : active) {
+    if (w.source == Source::kPrintScreen) snapshot = &w;
+    if (w.source == Source::kCapture) capture = &w;
+  }
+  int kind = g_preview >= 0 ? g_preview : active.empty() ? int(kOverlayOff) : settings().overlay;
+  // screenshots are one moment, so still show the badge when the overlay is otherwise off
+  if (kind == kOverlayOff && snapshot) kind = kOverlayBadge;
   if (kind == kOverlayOff) {
     hide_badge();
     hide_frame();
@@ -614,9 +622,17 @@ void show_overlay(const std::vector<Watcher>& active) {
     return;
   }
   hide_frame();
-  const std::wstring text = active.empty()       ? L"Nothing is watching"
-                            : active.size() == 1 ? active[0].name + L" " + active[0].what
-                                                 : std::to_wstring(active.size()) + L" programs are watching";
+  std::wstring text;
+  if (snapshot) {
+    const Watcher* shown = capture ? capture : snapshot;
+    text = shown->name + L" " + shown->what;
+  } else if (active.empty()) {
+    text = L"Nothing is watching";
+  } else if (active.size() == 1) {
+    text = active[0].name + L" " + active[0].what;
+  } else {
+    text = std::to_wstring(active.size()) + L" programs are watching";
+  }
   show_badge(text, !active.empty());
 }
 

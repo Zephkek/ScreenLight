@@ -31,6 +31,7 @@ std::vector<Watcher> collect_watchers() {
   if (s.watch_screen) {
     append(&all, duplicating_processes());
     append(&all, game_captures());
+    append(&all, print_screen_watchers());
     static const DWORD session = [] {
       DWORD id = 0;
       ProcessIdToSessionId(GetCurrentProcessId(), &id);

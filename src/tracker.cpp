@@ -156,7 +156,7 @@ void restore_tracked() {
     unsigned long long started = 0;
     int consumed = 0;
     if (swscanf(line.c_str(), L"%d\t%lu\t%llu\t%d\t%lu\t%n", &source, &pid, &started, &open, &window, &consumed) < 5 ||
-        consumed <= 0 || open <= 0 || source < 0 || source > int(Source::kKeyboard)) {
+        consumed <= 0 || open <= 0 || source < 0 || source > int(Source::kPrintScreen)) {
       continue;
     }
     if (!pid || started_at(pid) != started) continue;

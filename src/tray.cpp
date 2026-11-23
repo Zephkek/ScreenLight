@@ -34,6 +34,7 @@ bool g_started;
 std::map<std::wstring, ULONGLONG, NoCase> g_last_seen;
 std::wstring g_tip = L"Screen Light - Nothing is watching";
 std::wstring g_notified;
+ULONGLONG g_snapshot_seq;
 
 NOTIFYICONDATAW tray_data(HWND window) {
   NOTIFYICONDATAW data{};
@@ -90,16 +91,22 @@ void notify(HWND window, const std::vector<Watcher>& news) {
 
 void notify_new(HWND window, const std::vector<Watcher>& watchers) {
   const ULONGLONG now = GetTickCount64();
+  const bool snapshot = std::any_of(watchers.begin(), watchers.end(),
+                                    [](const Watcher& w) { return w.source == Source::kPrintScreen; });
   std::vector<Watcher> news;
   for (const Watcher& w : watchers) {
+    if (snapshot && w.source == Source::kCapture) continue;
     const auto last = g_last_seen.find(key_of(w));
-    const bool quiet = last == g_last_seen.end() || now - last->second > kNotifyAgainMs;
+    const bool quiet = w.source == Source::kPrintScreen
+                           ? print_screen_seq() != g_snapshot_seq
+                           : (last == g_last_seen.end() || now - last->second > kNotifyAgainMs);
     const bool listed = std::any_of(news.begin(), news.end(),
                                     [&](const Watcher& n) { return _wcsicmp(key_of(n).c_str(), key_of(w).c_str()) == 0; });
     if (quiet && !listed) news.push_back(w);
   }
   for (const Watcher& w : watchers) g_last_seen[key_of(w)] = now;
   if (g_started && !news.empty() && settings().notifications) notify(window, news);
+  if (snapshot) g_snapshot_seq = print_screen_seq();
   g_started = true;
 }
 
@@ -175,6 +182,20 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
     case WM_TIMER:
       if (wparam == kPollTimer) refresh(window);
       return 0;
+    case WM_INPUT: {
+      RAWINPUT input;
+      UINT size = sizeof input;
+      if (GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam), RID_INPUT, &input, &size, sizeof(RAWINPUTHEADER)) ==
+              size &&
+          input.header.dwType == RIM_TYPEKEYBOARD) {
+        const RAWKEYBOARD& key = input.data.keyboard;
+        const bool print_screen = key.VKey == VK_SNAPSHOT || (key.VKey == 0xFF && key.MakeCode == 0x37);
+        if (!(key.Flags & RI_KEY_BREAK) && print_screen && note_print_screen()) {
+          PostMessageW(window, kRefreshMessage, 0, 0);
+        }
+      }
+      break;
+    }
     case kRefreshMessage:
       refresh(window);
       return 0;
@@ -197,7 +218,7 @@ LRESULT CALLBACK tray_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpar
         retheme_window();
         retheme_settings();
       }
-      if (settings().watch_input) {
+      if (settings().watch_input || settings().watch_screen) {
         start_input_watch(window);
       } else {
         stop_input_watch();
@@ -270,8 +291,10 @@ int run_tray(HINSTANCE instance, bool show) {
   ChangeWindowMessageFilterEx(window, kShowMessage, MSGFLT_ALLOW, nullptr);
   set_overlay_owner(window);
   add_icon(window);
+  RAWINPUTDEVICE keyboard{0x01, 0x06, RIDEV_INPUTSINK, window};
+  RegisterRawInputDevices(&keyboard, 1, sizeof keyboard);
   WTSRegisterSessionNotification(window, NOTIFY_FOR_ALL_SESSIONS);
-  if (settings().watch_input) start_input_watch(window);
+  if (settings().watch_input || settings().watch_screen) start_input_watch(window);
   watch_publishers(window);
   refresh(window);
   SetTimer(window, kPollTimer, 1000, nullptr);

@@ -17,7 +17,18 @@ constexpr wchar_t kServiceName[] = L"ScreenLight";
 constexpr COLORREF kIdleColor = RGB(140, 140, 140);
 constexpr COLORREF kLitColor = RGB(226, 52, 40);
 
-enum class Source { kDuplication, kHiddenDesktop, kRemote, kInput, kScreenRead, kMagnifier, kThumbnail, kCapture, kKeyboard };
+enum class Source {
+  kDuplication,
+  kHiddenDesktop,
+  kRemote,
+  kInput,
+  kScreenRead,
+  kMagnifier,
+  kThumbnail,
+  kCapture,
+  kKeyboard,
+  kPrintScreen
+};
 
 struct NoCase {
   bool operator()(const std::wstring& a, const std::wstring& b) const { return _wcsicmp(a.c_str(), b.c_str()) < 0; }
@@ -74,6 +85,9 @@ std::vector<Watcher> remote_viewers();
 void remote_changed();
 void displays_changed();
 std::vector<Watcher> input_senders();
+std::vector<Watcher> print_screen_watchers();
+bool note_print_screen();
+ULONGLONG print_screen_seq();
 std::vector<Watcher> game_captures();
 std::vector<Watcher> possible_watchers();
 std::vector<Watcher> system_watchers(DWORD session);
