@@ -154,7 +154,7 @@ void fill(HWND dialog) {
   HWND list = GetDlgItem(dialog, IDC_IGNORED);
   for (const std::wstring& path : s.ignored) ListBox_AddString(list, path.c_str());
   fit_list(list);
-  std::wstring about = L"Screen Light 0.1.0 by Zeph";
+  std::wstring about = L"Screen Light 0.1.1 by Zeph";
   if (portable()) about += L" (portable)";
   SetDlgItemTextW(dialog, IDC_ABOUT, about.c_str());
   show_badge(dialog);

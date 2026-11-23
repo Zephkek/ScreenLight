@@ -6,7 +6,7 @@ import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ISCC = os.environ.get('SCREENLIGHT_ISCC', 'D:/toolchains/InnoSetup7/ISCC.exe')
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 OUT = os.path.join(HERE, 'out', 'release')
 
 
