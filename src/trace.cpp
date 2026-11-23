@@ -63,7 +63,6 @@ struct EventIdFilter {
 constexpr ULONG kSyncRequest = 0x80000000;
 constexpr ULONGLONG kCalibrateMs = 5000;
 constexpr ULONGLONG kReadShowsForMs = 5000;
-// a screenshot opens and closes a capture session within one frame, so keep it listed a moment
 constexpr ULONGLONG kCaptureLingerMs = 5000;
 
 std::atomic<bool> g_stopping{false};

@@ -10,6 +10,7 @@ namespace {
 
 constexpr wchar_t kDisplayName[] = L"Screen Light";
 constexpr wchar_t kDescription[] = L"Tells the Screen Light tray icon about programs that read the screen.";
+constexpr DWORD kCheckTraceMs = 10000;
 
 SERVICE_STATUS_HANDLE g_status_handle;
 SERVICE_STATUS g_status{SERVICE_WIN32_OWN_PROCESS, SERVICE_START_PENDING, 0, NO_ERROR, 0, 0, 0};
@@ -34,12 +35,6 @@ DWORD WINAPI pipe_thread(void*) {
   return 0;
 }
 
-// keep the trace alive if its real-time consumer ever exits
-DWORD WINAPI trace_watchdog(void*) {
-  while (WaitForSingleObject(g_stop, 10000) == WAIT_TIMEOUT) ensure_trace();
-  return 0;
-}
-
 void WINAPI service_main(DWORD, LPWSTR*) {
   g_status_handle = RegisterServiceCtrlHandlerExW(kServiceName, control, nullptr);
   if (!g_status_handle) return;
@@ -47,14 +42,16 @@ void WINAPI service_main(DWORD, LPWSTR*) {
   restore_tracked();
   remember_drivers();
   start_trace();
-  HANDLE watchdog = CreateThread(nullptr, 0, trace_watchdog, nullptr, 0, nullptr);
   HANDLE pipe = CreateThread(nullptr, 0, pipe_thread, nullptr, 0, nullptr);
   set_state(SERVICE_RUNNING);
-  const DWORD wait = flush_needed() ? 500 : INFINITE;
-  while (WaitForSingleObject(g_stop, wait) == WAIT_TIMEOUT) flush_trace();
-  if (watchdog) {
-    WaitForSingleObject(watchdog, 15000);
-    CloseHandle(watchdog);
+  const bool flush = flush_needed();
+  ULONGLONG checked = GetTickCount64();
+  while (WaitForSingleObject(g_stop, flush ? 500 : kCheckTraceMs) == WAIT_TIMEOUT) {
+    if (flush) flush_trace();
+    if (GetTickCount64() - checked >= kCheckTraceMs) {
+      ensure_trace();
+      checked = GetTickCount64();
+    }
   }
   stop_trace();
   if (pipe) {
