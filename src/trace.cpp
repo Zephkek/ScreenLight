@@ -66,6 +66,7 @@ constexpr ULONGLONG kReadShowsForMs = 5000;
 // a screenshot opens and closes a capture session within one frame, so keep it listed a moment
 constexpr ULONGLONG kCaptureLingerMs = 5000;
 
+std::atomic<bool> g_stopping{false};
 std::atomic<DWORD> g_calibrating{0};
 std::atomic<ULONGLONG> g_calibrate_until{0};
 std::atomic<ULONG> g_read_code{0};
@@ -375,6 +376,7 @@ void begin_calibration(DWORD pid) {
 ULONG read_code() { return g_read_code; }
 
 bool start_trace() {
+  g_stopping = false;
   ControlTraceW(0, kSessionName, properties(), EVENT_TRACE_CONTROL_STOP);
   if (StartTraceW(&g_session, kSessionName, properties()) != ERROR_SUCCESS) return false;
   enable_win32k();
@@ -395,13 +397,25 @@ bool start_trace() {
   return g_thread != nullptr;
 }
 
+bool trace_alive() { return g_thread && WaitForSingleObject(g_thread, 0) == WAIT_TIMEOUT; }
+
+void ensure_trace() {
+  if (g_stopping.load() || trace_alive()) return;
+  stop_trace();
+  start_trace();
+}
+
 bool flush_needed() { return !IsWindows8OrGreater(); }
 
 void flush_trace() { ControlTraceW(g_session, nullptr, properties(), EVENT_TRACE_CONTROL_FLUSH); }
 
 void stop_trace() {
+  g_stopping = true;
   ControlTraceW(g_session, nullptr, properties(), EVENT_TRACE_CONTROL_STOP);
-  if (g_consumer != INVALID_PROCESSTRACE_HANDLE) CloseTrace(g_consumer);
+  if (g_consumer != INVALID_PROCESSTRACE_HANDLE) {
+    CloseTrace(g_consumer);
+    g_consumer = INVALID_PROCESSTRACE_HANDLE;
+  }
   if (g_thread) {
     WaitForSingleObject(g_thread, 5000);
     CloseHandle(g_thread);

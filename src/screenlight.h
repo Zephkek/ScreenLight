@@ -111,6 +111,8 @@ std::vector<Watcher> tracked(DWORD session);
 void restore_tracked();
 
 bool start_trace();
+bool trace_alive();
+void ensure_trace();
 bool flush_needed();
 void flush_trace();
 void stop_trace();
