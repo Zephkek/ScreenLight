@@ -91,7 +91,7 @@ bool find_sender(DWORD session, DWORD* pid, DWORD* tid);
 
 void track_seen(Source source, DWORD pid, const std::wstring& what, ULONGLONG ttl_ms, ULONG window = 0);
 void track_open(Source source, DWORD pid, const std::wstring& what);
-void track_close(Source source, DWORD pid);
+void track_close(Source source, DWORD pid, ULONGLONG linger_ms = 0);
 bool tracking(Source source, DWORD pid);
 std::vector<Watcher> tracked(DWORD session);
 void restore_tracked();

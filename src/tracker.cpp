@@ -98,12 +98,14 @@ void track_open(Source source, DWORD pid, const std::wstring& what) {
   save_locked();
 }
 
-void track_close(Source source, DWORD pid) {
+void track_close(Source source, DWORD pid, ULONGLONG linger_ms) {
   std::lock_guard<std::mutex> hold(g_lock);
+  const ULONGLONG now = GetTickCount64();
   bool changed = false;
   for (Tracked& t : g_tracked) {
     if (t.source == source && t.pid == pid && t.open > 0) {
       --t.open;
+      t.until = std::max(t.until, now + linger_ms);
       changed = true;
     }
   }

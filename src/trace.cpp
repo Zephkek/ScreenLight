@@ -63,6 +63,8 @@ struct EventIdFilter {
 constexpr ULONG kSyncRequest = 0x80000000;
 constexpr ULONGLONG kCalibrateMs = 5000;
 constexpr ULONGLONG kReadShowsForMs = 5000;
+// a screenshot opens and closes a capture session within one frame, so keep it listed a moment
+constexpr ULONGLONG kCaptureLingerMs = 5000;
 
 std::atomic<DWORD> g_calibrating{0};
 std::atomic<ULONGLONG> g_calibrate_until{0};
@@ -296,7 +298,7 @@ void graphics_capture(PEVENT_RECORD record) {
   if (id != kCaptureStopped) return;
   DWORD session = 0;
   if (!tracking(Source::kCapture, pid) && ProcessIdToSessionId(pid, &session)) forget_running_captures(session);
-  track_close(Source::kCapture, pid);
+  track_close(Source::kCapture, pid, kCaptureLingerMs);
 }
 
 EVENT_TRACE_PROPERTIES* properties() {
